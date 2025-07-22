@@ -140,6 +140,8 @@ def obj(sec_filing: Filing) -> Optional[object]:
         return TenQ(sec_filing)
     elif matches_form(sec_filing, "10-K"):
         return TenK(sec_filing)
+    elif matches_form(sec_filing, "10-KT"):
+        return TenK(sec_filing)
     elif matches_form(sec_filing, "20-F"):
         return TwentyF(sec_filing)
     elif matches_form(sec_filing, THIRTEENF_FORMS):

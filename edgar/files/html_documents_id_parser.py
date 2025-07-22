@@ -1,4 +1,6 @@
 import re
+import signal
+import platform
 from typing import List, Dict
 from bs4 import BeautifulSoup, Tag, NavigableString
 
@@ -13,6 +15,16 @@ from edgar.files.html_documents import (
 )
 from edgar.files.htmltools import ChunkedDocument
 
+
+# Define timeout exception class
+class TimeoutException(Exception):
+    """Timeout exception class, thrown when processing time exceeds the threshold"""
+    pass
+
+# Timeout handler function
+def timeout_handler(signum, frame):
+    """Triggered when timeout occurs, throws timeout exception"""
+    raise TimeoutException("Processing timeout")
 
 class AssembleText:
 
@@ -91,6 +103,16 @@ class AssembleText:
     def assemble_items(
         html_content: str, item_links: List, markdown: bool = False
     ) -> dict:
+        # Check if SIGALRM is supported (not supported on Windows)
+        supports_alarm = platform.system() != "Windows"
+        
+        # If alarm is supported, set up timeout handling
+        if supports_alarm:
+            # Set timeout handler function
+            signal.signal(signal.SIGALRM, timeout_handler)
+            # Set 10-second timeout
+            signal.alarm(10)
+        
         try:
             root: Tag = HtmlDocument.get_root(html_content)
             start_element = clean_html_root(root)
@@ -190,8 +212,16 @@ class AssembleText:
                     items["Signature"] = ""
 
             return items
+        except TimeoutException:
+            # Timeout handling, return empty dictionary
+            print("HTML processing timeout (exceeded 10 seconds), returning empty result")
+            return {}
         except Exception as e:
             return {}
+        finally:
+            # If alarm is supported, cancel the alarm
+            if supports_alarm:
+                signal.alarm(0)
 
 class ParsedHtml10K:
 
@@ -373,9 +403,9 @@ class ParsedHtml10K:
             "Item 2": "Properties",
             "Item 3": "Legal Proceedings",
             "Item 4": "Mine Safety Disclosures",
-            "Item 5": "Market for Registrant’s Common Equity, Related Stockholder Matters and Issuer Purchases of Equity Securities",
+            "Item 5": "Market for Registrant's Common Equity, Related Stockholder Matters and Issuer Purchases of Equity Securities",
             "Item 6": "[Reserved]",
-            "Item 7": "Management’s Discussion and Analysis of Financial Condition and Results of Operations",
+            "Item 7": "Management's Discussion and Analysis of Financial Condition and Results of Operations",
             "Item 7A": "Quantitative and Qualitative Disclosures About Market Risk",
             "Item 8": "Financial Statements and Supplementary Data",
             "Item 9": "Changes in and Disagreements with Accountants on Accounting and Financial Disclosure",
@@ -530,7 +560,6 @@ class ParsedHtml10Q:
         for table in tables:
             table_links: List[Dict] = []
             for row in table.find_all("tr"):
-                row_text = row.get_text()
                 row_text = row.get_text().strip()
                 part_match = part_regex.match(row_text)
                 if part_match:
@@ -620,7 +649,7 @@ class ParsedHtml10Q:
         items_match_3 = {  # Item descriptions
             "part i": {
                 "Item 1": "Financial Statements",
-                "Item 2": "Management’s Discussion and Analysis of Financial Condition and Results of Operations",
+                "Item 2": "Management's Discussion and Analysis of Financial Condition and Results of Operations",
                 "Item 3": "Quantitative and Qualitative Disclosures About Market Risk",
                 "Item 4": "Controls and Procedures",
             },
@@ -667,21 +696,23 @@ class ParsedHtml10Q:
             return {}
         return item_links
 
-    def extract_html(self, html_content: str, structure, markdown:bool=True) -> dict:
+    def extract_html(self, html_content: str, structure, markdown: bool = True) -> dict:
         """Extract 10-Q items from HTML content, handling same item numbers in different parts."""
         index_table = self.extract_html_link_info(html_content)
         item_links = self.extract_item_and_split(index_table)
         
-        # Assemble items with part information preserved
-        item_result = AssembleText.assemble_items(html_content, item_links, markdown=markdown)
-        res = {
-            "part i": {},
-            "part ii":{},
-            "extracted":{}
-        }
-        for one in item_result:
-            if isinstance(one, str):
-                res["extracted"][one.lower()] = item_result[one]
-            elif isinstance(one, tuple):
-                res[one[0].lower()][one[1].lower()] = item_result[one]
-        return res
+        item_result = AssembleText.assemble_items(
+            html_content, item_links, markdown=markdown
+        )
+
+        # Group items by part
+        result = {"part i": {}, "part ii": {}, "extracted": {}}
+
+        for item_name, content in item_result.items():
+            if isinstance(item_name, tuple):
+                part_name, item_name = item_name
+                result[part_name][item_name.lower()] = content
+            else:
+                result["extracted"][item_name.lower()] = content
+
+        return result

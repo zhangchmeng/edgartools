@@ -251,7 +251,7 @@ class TenK(CompanyReport):
     })
 
     def __init__(self, filing):
-        assert filing.form in ['10-K', '10-K/A'], f"This form should be a 10-K but was {filing.form}"
+        assert filing.form in ['10-K', '10-K/A', '10-KT', '10-KT/A'], f"This form should be a 10-K but was {filing.form}"
         super().__init__(filing)
 
     @property
@@ -294,14 +294,29 @@ class TenK(CompanyReport):
         return item_text
 
     def get_item_with_part(self, part: str, item: str, markdown:bool=True):
+
         if not part:
             return self.id_parse_document(markdown).get(item.lower())
-        # Show the item or part from the filing document. e.g. Item 1 Business from 10-K or Part I from 10-Q
-        item_text = self.chunked_document.get_item_with_part(part, item, markdown=markdown)
-        # remove first line or last line (redundant part information)
-        if not item_text or not item_text.strip():
-            return self.id_parse_document(markdown).get(part.lower(), {}).get(item.lower())
-        return item_text
+        if part == "Extracted":
+            item_text = ""
+            if item == "Signature":
+                item_text = self.chunked_document.get_signature(
+                                markdown=markdown
+                            )
+            elif item == "Item 0":
+                item_text = self.chunked_document.get_introduction(
+                            markdown=markdown
+                        )
+            if not item_text or not item_text.strip():
+                return self.id_parse_document(markdown).get(part.lower(), {}).get(item.lower())
+            return item_text
+        else:
+            # Show the item or part from the filing document. e.g. Item 1 Business from 10-K or Part I from 10-Q
+            item_text = self.chunked_document.get_item_with_part(part, item, markdown=markdown)
+            # remove first line or last line (redundant part information)
+            if not item_text or not item_text.strip():
+                return self.id_parse_document(markdown).get(part.lower(), {}).get(item.lower())
+            return item_text
     
     def get_structure(self):
         # Create the main tree
@@ -433,13 +448,27 @@ class TenQ(CompanyReport):
     
     def get_item_with_part(self, part: str, item: str, markdown:bool=True):
         if not part:
-            return self.id_parse_document(markdown).get(part.lower(), {}).get(item.lower())
-        # Show the item or part from the filing document. e.g. Item 1 Business from 10-K or Part I from 10-Q
-        item_text = self.chunked_document.get_item_with_part(part, item, markdown=markdown)
-        # remove first line or last line (redundant part information)
-        if not item_text or not item_text.strip():
-            return self.id_parse_document(markdown).get(part.lower(), {}).get(item.lower())
-        return item_text
+            return self.id_parse_document(markdown).get(item.lower())
+        if part == "Extracted":
+            item_text = ""
+            if item == "Signature":
+                item_text = self.chunked_document.get_signature(
+                                markdown=markdown
+                            )
+            elif item == "Item 0":
+                item_text = self.chunked_document.get_introduction(
+                            markdown=markdown
+                        )
+            if not item_text or not item_text.strip():
+                return self.id_parse_document(markdown).get(part.lower(), {}).get(item.lower())
+            return item_text
+        else:
+            # Show the item or part from the filing document. e.g. Item 1 Business from 10-K or Part I from 10-Q
+            item_text = self.chunked_document.get_item_with_part(part, item, markdown=markdown)
+            # remove first line or last line (redundant part information)
+            if not item_text or not item_text.strip():
+                return self.id_parse_document(markdown).get(part.lower(), {}).get(item.lower())
+            return item_text
     
     @lru_cache(maxsize=1)
     def id_parse_document(self, markdown:bool=True):
@@ -616,6 +645,12 @@ class TwentyF(CompanyReport):
 
     def __str__(self):
         return f"""TwentyF('{self.company}')"""
+
+
+# class TenKT(TenK):
+#     def __init__(self, filing):
+#         assert filing.form in ['10-KT', '10-KT/A'], f"This form should be a 10-KT but was {filing.form}"
+#         super().__init__(filing)
 
 
 class CurrentReport():
