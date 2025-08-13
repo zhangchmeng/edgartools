@@ -159,6 +159,10 @@ class TenK(CompanyReport):
                 "Description": "Any comments from the SEC staff on the company’s previous filings" +
                                "that remain unresolved."
             },
+            "ITEM 1C": {
+                "Title": "Cybersecurity",
+                "Description": "Cybersecurity"
+            },
             "ITEM 2": {
                 "Title": "Properties",
                 "Description": "Information about the physical properties owned or leased by the company."
@@ -294,7 +298,6 @@ class TenK(CompanyReport):
         return item_text
 
     def get_item_with_part(self, part: str, item: str, markdown:bool=True):
-
         if not part:
             return self.id_parse_document(markdown).get(item.lower())
         if part == "Extracted":

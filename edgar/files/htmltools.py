@@ -466,11 +466,13 @@ class ChunkedDocument:
                 for block in chunk:
                     if isinstance(block, LinkBlock):
                         yield block.to_markdown(prefix_src=self.prefix_src)
+                    elif isinstance(block, TableBlock):
+                        yield block.get_text()
                     else:
                         yield block.to_markdown()
         else:
             for chunk in chunks:
-                yield "".join([block.to_markdown() for block in chunk])
+                yield "".join([block.to_markdown() if not isinstance(block, TableBlock) else block.get_text()for block in chunk])
 
     def get_item_with_part(self, part: str, item: str, markdown:bool=False):
         if isinstance(part, str):
