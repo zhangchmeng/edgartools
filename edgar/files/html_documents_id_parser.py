@@ -2,7 +2,7 @@ import re
 import signal
 import platform
 from typing import List, Dict, Optional, Set, Any, Union
-from bs4 import BeautifulSoup, Tag, NavigableString
+from bs4 import BeautifulSoup, Tag
 import time
 import logging
 from edgar.files.html_documents import (
@@ -369,6 +369,7 @@ class AssembleText:
             # If alarm is supported, cancel the alarm
             if supports_alarm:
                 signal.alarm(0)
+
 class ParsedHtml10K:
     @staticmethod
     def extract_element_id(href: str) -> str:
@@ -474,8 +475,178 @@ class ParsedHtml10K:
                                 
             if table_links:
                 link_info.append(table_links)
+        
+        # 如果没有找到table或table为空，尝试从含有TABLE OF CONTENTS的div中解析
+        if not link_info:
+            logging.info("No table-based content found, attempting to parse from TABLE OF CONTENTS div")
+            div_link_info = self.extract_html_link_from_div(html_content)
+            if div_link_info:
+                link_info.extend(div_link_info)
+                logging.info(f"Successfully extracted {len(div_link_info)} tables from div structure")
+        
         return link_info
     
+    def extract_html_link_from_div(self, html_content: str) -> List[List[Dict[str, Any]]]:
+        """
+        从含有TABLE OF CONTENTS的顶级div中获取目录信息并进行解析。
+        当传统的table结构不存在时，解析基于绝对定位div的目录结构。
+        
+        Returns:
+            List of tables, each containing list of row data with text and links.
+            格式与extract_html_link_info保持一致。
+        """
+        if not html_content:
+            return []
+        
+        html_content = html_content.replace("&nbsp;", " ")
+        
+        try:
+            soup = BeautifulSoup(html_content, "html.parser")
+        except Exception as e:
+            logging.error(f"Failed to parse HTML: {e}")
+            return []
+        
+        # Remove script and style tags
+        for tag in soup(["script", "style", "noscript"]):
+            tag.decompose()
+        
+        # 查找包含"TABLE OF CONTENTS"的div
+        toc_div = None
+        for div in soup.find_all("div"):
+            if div.get_text(strip=True) == "TABLE OF CONTENTS":
+                # 找到包含目录的父级容器
+                toc_div = div.find_parent("div")
+                break
+        
+        if not toc_div:
+            logging.warning("TABLE OF CONTENTS div not found")
+            return []
+        
+        # 收集所有包含链接和页码的div元素
+        content_divs = []
+        
+        # 获取目录容器内的所有div元素
+        all_divs = toc_div.find_all("div")
+        
+        # 按照top位置排序，模拟表格行的顺序
+        positioned_divs = []
+        for div in all_divs:
+            style = div.get("style", "")
+            if "position:absolute" in style and "top:" in style:
+                # 提取top位置
+                try:
+                    top_match = re.search(r'top:(\d+(?:\.\d+)?)px', style)
+                    if top_match:
+                        top_pos = float(top_match.group(1))
+                        positioned_divs.append((top_pos, div))
+                except:
+                    continue
+        
+        # 按top位置排序
+        positioned_divs.sort(key=lambda x: x[0])
+        
+        # 按行分组 - 相同或相近top位置的div属于同一行
+        rows = []
+        current_row = []
+        current_top = None
+        tolerance = 5  # 5px的容差范围
+        
+        for top_pos, div in positioned_divs:
+            if current_top is None or abs(top_pos - current_top) <= tolerance:
+                current_row.append(div)
+                current_top = top_pos
+            else:
+                if current_row:
+                    rows.append(current_row)
+                current_row = [div]
+                current_top = top_pos
+        
+        if current_row:
+            rows.append(current_row)
+        
+        # 解析每一行，查找包含链接和页码的行
+        table_links = []
+        
+        for row_divs in rows:
+            # 检查这一行是否包含链接
+            has_links = any(div.find("a") for div in row_divs)
+            if not has_links:
+                continue
+            
+            # 检查是否包含页码
+            has_page_num = False
+            page_texts = []
+            
+            for div in row_divs:
+                div_text = div.get_text(strip=True)
+                # 检查是否为页码（纯数字或包含页码模式）
+                if (div_text.isdigit() or 
+                    self._contains_page_numbers(div_text)):
+                    has_page_num = True
+                    page_texts.append(div_text)
+            
+            if not has_page_num:
+                continue
+            
+            # 提取文本内容
+            text_parts = []
+            row_links = []
+            
+            # 按left位置排序div，确保文本顺序正确
+            sorted_divs = []
+            for div in row_divs:
+                style = div.get("style", "")
+                left_match = re.search(r'left:(\d+(?:\.\d+)?)px', style)
+                if left_match:
+                    left_pos = float(left_match.group(1))
+                    sorted_divs.append((left_pos, div))
+            
+            sorted_divs.sort(key=lambda x: x[0])
+            
+            for left_pos, div in sorted_divs:
+                div_text = div.get_text(strip=True)
+                if div_text and not div_text.isdigit():
+                    # 跳过纯页码文本
+                    if not self._contains_page_numbers(div_text):
+                        text_parts.append(div_text)
+                
+                # 提取链接
+                links = div.find_all("a")
+                for link in links:
+                    href = link.get("href")
+                    if href and href.startswith("#"):
+                        link_id = href.split("#")[-1]
+                        row_links.append(link_id)
+            
+            # 过滤掉页码范围的结束链接
+            if row_links and page_texts:
+                # 使用第一个页码文本进行过滤
+                page_text = page_texts[0] if page_texts else ""
+                link_texts = [link.get_text(strip=True) for link in 
+                             [div.find("a") for div in row_divs if div.find("a")]]
+                link_texts = [lt for lt in link_texts if lt]  # 过滤空值
+                
+                filtered_links = self._filter_range_end_links(page_text, row_links, link_texts)
+                row_links = filtered_links
+            
+            # 判断是否为多段落项目
+            is_multi_section = self._is_multi_section_item(text_parts, row_links)
+            
+            if row_links and text_parts:
+                table_links.append({
+                    "text": text_parts,
+                    "links": row_links,
+                    "is_multi_section": is_multi_section,
+                    "link_count": len(row_links)
+                })
+                
+                # 记录多段落项目检测结果
+                if is_multi_section and len(row_links) > 1:
+                    logging.info(f"Multi-section item detected in div: {text_parts[0] if text_parts else 'Unknown'} with {len(row_links)} links")
+        
+        # 返回格式与extract_html_link_info一致
+        return [table_links] if table_links else []
+
     def _contains_page_numbers(self, text: str) -> bool:
         """
         Enhanced page number detection to handle complex patterns.
@@ -943,7 +1114,7 @@ class ParsedHtml10K:
         item_result = AssembleText.assemble_items(
             html_content, item_links, markdown=markdown
         )
-        
+      
         item_to_part = {}
         for part_name in structure.structure:
             part_items = structure.get_part(part_name)
@@ -1058,8 +1229,343 @@ class ParsedHtml10Q:
             if len(link_info) > 20:
                 logging.warning("Found too many tables with links, limiting results")
                 break
+        
+        # 如果没有找到table或table为空，尝试从含有TABLE OF CONTENTS的div中解析
+        if not link_info:
+            logging.info("No table-based content found, attempting to parse from TABLE OF CONTENTS div")
+            div_link_info = self.extract_html_link_from_div(html_content)
+            if div_link_info:
+                link_info.extend(div_link_info)
+                logging.info(f"Successfully extracted {len(div_link_info)} tables from div structure")
 
         return link_info
+    
+    def extract_html_link_from_div(self, html_content: str) -> List[List[Dict[str, Any]]]:
+        """
+        从含有TABLE OF CONTENTS的顶级div中获取目录信息并进行解析。
+        当传统的table结构不存在时，解析基于绝对定位div的目录结构。
+        
+        Returns:
+            List of tables, each containing list of row data with text and links.
+            格式与extract_html_link_info保持一致。
+        """
+        if not html_content:
+            return []
+        
+        html_content = html_content.replace("&nbsp;", " ")
+        
+        try:
+            soup = BeautifulSoup(html_content, "html.parser")
+        except Exception as e:
+            logging.error(f"Failed to parse HTML: {e}")
+            return []
+        
+        # Remove script and style tags
+        for tag in soup(["script", "style", "noscript"]):
+            tag.decompose()
+        
+        # 查找包含"TABLE OF CONTENTS"的div
+        toc_div = None
+        for div in soup.find_all("div"):
+            if div.get_text(strip=True) == "TABLE OF CONTENTS":
+                # 找到包含目录的父级容器
+                toc_div = div.find_parent("div")
+                break
+        
+        if not toc_div:
+            logging.warning("TABLE OF CONTENTS div not found")
+            return []
+        
+        # 获取目录容器内的所有div元素
+        all_divs = toc_div.find_all("div")
+        
+        # 按照top位置排序，模拟表格行的顺序
+        positioned_divs = []
+        for div in all_divs:
+            style = div.get("style", "")
+            if "position:absolute" in style and "top:" in style:
+                # 提取top位置
+                try:
+                    top_match = re.search(r'top:(\d+(?:\.\d+)?)px', style)
+                    if top_match:
+                        top_pos = float(top_match.group(1))
+                        positioned_divs.append((top_pos, div))
+                except:
+                    continue
+        
+        # 按top位置排序
+        positioned_divs.sort(key=lambda x: x[0])
+        
+        # 按行分组 - 相同或相近top位置的div属于同一行
+        rows = []
+        current_row = []
+        current_top = None
+        tolerance = 5  # 5px的容差范围
+        
+        for top_pos, div in positioned_divs:
+            if current_top is None or abs(top_pos - current_top) <= tolerance:
+                current_row.append(div)
+                current_top = top_pos
+            else:
+                if current_row:
+                    rows.append(current_row)
+                current_row = [div]
+                current_top = top_pos
+        
+        if current_row:
+            rows.append(current_row)
+        
+        # 解析每一行，查找包含链接和页码的行
+        table_links = []
+        part_regex = re.compile(r"^\s*(Part\s+[IVXLC]+)\s*", re.IGNORECASE)
+        part = None
+        
+        for row_divs in rows:
+            # 检查这一行是否包含链接
+            has_links = any(div.find("a") for div in row_divs)
+            if not has_links:
+                # 检查是否为Part标题行
+                row_text = " ".join(div.get_text(strip=True) for div in row_divs)
+                part_match = part_regex.match(row_text)
+                if part_match:
+                    part = re.sub(r'\s+', ' ', part_match.group(1).lower())
+                continue
+            
+            # 检查是否包含页码
+            has_page_num = False
+            page_texts = []
+            
+            for div in row_divs:
+                div_text = div.get_text(strip=True)
+                # 检查是否为页码（纯数字或包含页码模式）
+                if (div_text.isdigit() or 
+                    self._contains_page_numbers(div_text)):
+                    has_page_num = True
+                    page_texts.append(div_text)
+            
+            if not has_page_num:
+                continue
+            
+            # 提取文本内容
+            text_parts = []
+            row_links = []
+            
+            # 按left位置排序div，确保文本顺序正确
+            sorted_divs = []
+            for div in row_divs:
+                style = div.get("style", "")
+                left_match = re.search(r'left:(\d+(?:\.\d+)?)px', style)
+                if left_match:
+                    left_pos = float(left_match.group(1))
+                    sorted_divs.append((left_pos, div))
+            
+            sorted_divs.sort(key=lambda x: x[0])
+            
+            for left_pos, div in sorted_divs:
+                div_text = div.get_text(strip=True)
+                if div_text and not div_text.isdigit():
+                    # 跳过纯页码文本
+                    if not self._contains_page_numbers(div_text):
+                        text_parts.append(div_text)
+                
+                # 提取链接
+                links = div.find_all("a")
+                for link in links:
+                    href = link.get("href")
+                    if href and href.startswith("#"):
+                        link_id = href.split("#")[-1]
+                        row_links.append(link_id)
+            
+            # 过滤掉页码范围的结束链接
+            if row_links and page_texts:
+                # 使用第一个页码文本进行过滤
+                page_text = page_texts[0] if page_texts else ""
+                link_texts = [link.get_text(strip=True) for link in 
+                             [div.find("a") for div in row_divs if div.find("a")]]
+                link_texts = [lt for lt in link_texts if lt]  # 过滤空值
+                
+                filtered_links = self._filter_range_end_links(page_text, row_links, link_texts)
+                row_links = filtered_links
+            
+            # 判断是否为多段落项目
+            is_multi_section = self._is_multi_section_item(text_parts, row_links)
+            
+            if row_links and text_parts:
+                # 为了与10Q格式兼容，只取第一个链接
+                first_link = row_links[0] if row_links else None
+                if first_link:
+                    entry = {
+                        "text": text_parts,
+                        "link": first_link
+                    }
+                    if part:
+                        entry["part"] = part
+                    
+                    table_links.append(entry)
+                    
+                    # 记录多段落项目检测结果
+                    if is_multi_section and len(row_links) > 1:
+                        logging.info(f"Multi-section item detected in div (10Q): {text_parts[0] if text_parts else 'Unknown'} with {len(row_links)} links, using first link only")
+        
+        # 返回格式与extract_html_link_info一致
+        return [table_links] if table_links else []
+
+    def _contains_page_numbers(self, text: str) -> bool:
+        """
+        检测文本是否包含页码模式。
+        支持多种页码格式：单个数字、简单范围、多个范围、带括号的范围等。
+        
+        Args:
+            text: 要检测的文本
+            
+        Returns:
+            bool: 如果包含页码模式返回True，否则返回False
+        """
+        if not text or not text.strip():
+            return False
+        
+        text = text.strip()
+        
+        # 单个数字（1-4位）
+        if re.match(r'^\d{1,4}$', text):
+            return True
+        
+        # 简单范围："7-24", "82-87"
+        if re.match(r'^\d{1,4}-\d{1,4}$', text):
+            return True
+        
+        # 多个范围："7-24, 82-87", "7-24, 82-87, 90-101"
+        if re.match(r'^\d{1,4}-\d{1,4}(,\s*\d{1,4}-\d{1,4})+$', text):
+            return True
+        
+        # 带括号的范围："7-24 (Restated)", "82-87 (Revised)"
+        if re.match(r'^\d{1,4}-\d{1,4}\s*\([^)]+\)$', text):
+            return True
+        
+        # 多个数字用逗号分隔："5, 10, 15"
+        if re.match(r'^\d{1,4}(,\s*\d{1,4})+$', text):
+            return True
+        
+        return False
+    
+    def _is_multi_section_item(self, text: List[str], links: List[str]) -> bool:
+        """
+        判断一个项目是否为多段落项目（跨多个部分）。
+        
+        Args:
+            text: 项目的文本内容列表
+            links: 项目的链接列表
+            
+        Returns:
+            bool: 如果是多段落项目返回True，否则返回False
+        """
+        if not text or not links:
+            return False
+        
+        # 如果只有一个链接，不是多段落项目
+        if len(links) <= 1:
+            return False
+        
+        # 检查文本内容是否表明这是一个可能跨多段落的项目
+        text_content = " ".join(text).lower()
+        
+        # 某些项目更可能跨多个段落
+        multi_section_indicators = [
+            "management's discussion",
+            "financial statements",
+            "controls and procedures",
+            "risk factors",
+            "business"
+        ]
+        
+        for indicator in multi_section_indicators:
+            if indicator in text_content:
+                return True
+        
+        return False
+    
+    def _contains_multiple_page_ranges(self, text: str) -> bool:
+        """
+        检查文本是否包含多个页码范围。
+        
+        Args:
+            text: 要检查的文本
+            
+        Returns:
+            bool: 如果包含多个页码范围返回True
+        """
+        if not text:
+            return False
+        
+        # 匹配多个范围模式："7-24, 82-87, 90-101"
+        pattern = r'\d+-\d+(?:\s*,\s*\d+-\d+)+'
+        return bool(re.search(pattern, text))
+    
+    def _filter_range_end_links(self, cell_text: str, cell_links: List[str], link_texts: List[str]) -> List[str]:
+        """
+        过滤掉页码范围中的结束链接。
+        例如：对于页码"7-24"，如果有链接"7"和"24"，只保留"7"。
+        
+        Args:
+            cell_text: 单元格文本（包含页码信息）
+            cell_links: 单元格中的所有链接ID
+            link_texts: 对应链接的文本内容
+            
+        Returns:
+            List[str]: 过滤后的链接列表
+        """
+        if not cell_links or not cell_text:
+            return cell_links
+        
+        # 如果只有一个链接，直接返回
+        if len(cell_links) <= 1:
+            return cell_links
+        
+        # 检查是否包含页码范围
+        if not self._contains_page_numbers(cell_text):
+            return cell_links
+        
+        # 提取所有页码范围
+        ranges = []
+        
+        # 匹配单个范围："7-24"
+        simple_ranges = re.findall(r'(\d+)-(\d+)', cell_text)
+        for start, end in simple_ranges:
+            ranges.append((int(start), int(end)))
+        
+        if not ranges:
+            return cell_links
+        
+        # 收集所有范围的结束页码
+        end_pages = set()
+        for start, end in ranges:
+            end_pages.add(str(end))
+        
+        # 过滤链接：移除那些文本内容是范围结束页码的链接
+        filtered_links = []
+        for i, link in enumerate(cell_links):
+            link_text = link_texts[i] if i < len(link_texts) else ""
+            
+            # 如果链接文本不是范围的结束页码，保留它
+            if link_text not in end_pages:
+                filtered_links.append(link)
+            else:
+                # 检查是否也是某个范围的开始页码
+                is_start_page = False
+                for start, end in ranges:
+                    if link_text == str(start):
+                        is_start_page = True
+                        break
+                
+                # 如果既是结束页码又是开始页码，保留它
+                if is_start_page:
+                    filtered_links.append(link)
+        
+        # 如果过滤后没有链接了，返回原始链接列表
+        if not filtered_links:
+            return cell_links
+        
+        return filtered_links
 
     @staticmethod
     def extract_item_and_split(link_info: List):
@@ -1201,21 +1707,68 @@ class ParsedHtml10Q:
 
         return result
 
+def check_item_result(result):
+    # 统计所有item的数量
+    total_items = 0
+    empty_items = 0
+    for part_name, part_content in result.items():
+        if part_name == 'extracted':
+            continue
+        print(f"\n检查 {part_name} 的内容:")
+        if isinstance(part_content, dict):
+            part_items = len(part_content)
+            total_items += part_items
+            print(f"{part_name} 包含 {part_items} 个items")
+            
+            for item_name, item_content in part_content.items():
+                content_length = len(item_content) if item_content else 0
+                if content_length == 0:
+                    empty_items += 1
+                    print(f"警告: {part_name} 的 {item_name} 内容为空")
+                else:
+                    print(f"{item_name}: {content_length} 字符")
+        else:
+            print(f"警告: {part_name} 不是字典格式")
+    print(f"\n总结:")
+    print(f"总共发现 {total_items} 个items")
+    if empty_items > 0:
+        print(f"其中 {empty_items} 个items内容为空")
+
 
 def test():
     """ 检查确认正常类型的文件能解析成功 """
-    pass
-
-
-if __name__ == "__main__":
     from edgar import set_identity, get_by_accession_number
     from edgar.company_reports import TenK
     set_identity("1334307071@qq.com")
-    file_id = 691553
-    accession_number = "0001601712-25-000044"
+
+    accession_number = "0000320193-24-000123" # AAPL 应正常解析包括所有模块
+    filing = get_by_accession_number(accession_number)
+    result = ParsedHtml10K().extract_html(filing.html(), TenK.structure, markdown=True)
     
+
+    accession_number = "0001601712-25-000044" # 同一个item分为多个部分，检查 item 1, Item 7的字符数，确保能正常合并模块
+    filing = get_by_accession_number(accession_number)
+    result = ParsedHtml10K().extract_html(filing.html(), TenK.structure, markdown=True)
+    assert 144000 < len(result['part i']['item 1']) < 145000
+    assert 130000 < len(result['part ii']['item 7']) < 140000
+
+    accession_number = "0000726601-25-000013" # 内容中无table, 解析TABLE OF CONTENTS的div判断是否为目录
+    # TODO
+
+def test_10_q_processing():
+    """ 检查确认正常类型的文件能解析成功 """
+    from edgar import set_identity, get_by_accession_number
+    from edgar.company_reports import TenQ
+    set_identity("1334307071@qq.com")
+
+if __name__ == "__main__":
+    from edgar import set_identity, get_by_accession_number
+    from edgar.company_reports import TenQ, TenK
+    set_identity("1334307071@qq.com")
+    file_id = 691553
+    accession_number = "0000726601-25-000013"
     filing = get_by_accession_number(accession_number)
     print(
-    ParsedHtml10K().extract_html(filing.html(), TenK.structure, markdown=True)
+        ParsedHtml10K().extract_html(filing.html(), TenK.structure, markdown=True)
     )
 
