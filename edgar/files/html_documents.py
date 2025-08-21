@@ -252,7 +252,7 @@ class LinkBlock(Block):
         self.inline: bool = True
 
     def get_text(self) -> str:    
-        return '<{self.tag} alt="{self.alt}" src="{self.src}">'
+        return f'<{self.tag} alt="{self.alt}" src="{self.src}">'
 
     def to_markdown(self, prefix_src:str=""):
         return f"![alt  {self.alt}]({prefix_src}/{self.src})\n"
