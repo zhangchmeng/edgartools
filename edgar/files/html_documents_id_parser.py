@@ -686,6 +686,7 @@ class BaseHtmlParser:
     ) -> List[List[Dict[str, Any]]]:
         """
         Base method to extract links from HTML tables.
+        Enhanced to handle item rows without links by using first sub-item's link.
 
         Args:
             soup: BeautifulSoup object
@@ -705,10 +706,12 @@ class BaseHtmlParser:
         part = None
 
         for table_idx, table in enumerate(tables):
+            # print(table.get_text())
             table_links: List[Dict[str, Any]] = []
             rows = table.find_all("tr")
-
-            for row in rows:
+            
+            # Process rows and handle item rows without links
+            for row_idx, row in enumerate(rows):
                 if use_part_detection and part_regex:
                     row_text = row.get_text().strip()
                     part_match = part_regex.match(row_text)
@@ -720,9 +723,7 @@ class BaseHtmlParser:
 
                 if cells:
                     has_links = any(cell.find("a") for cell in cells)
-                    if not has_links:
-                        continue
-
+                    
                     text = []
                     for cell in cells:
                         cell_text = cell.get_text(
@@ -740,7 +741,7 @@ class BaseHtmlParser:
                     # Check if row contains page numbers
                     for cell in cells:
                         cell_text = cell.text.strip()
-                        if use_part_detection and len(cell_text) > 10:
+                        if use_part_detection and len(cell_text) > 100:
                             continue
 
                         if cell_text.isdigit() or self._contains_page_numbers(
@@ -749,12 +750,32 @@ class BaseHtmlParser:
                             exist_page_num = True
                             break
 
-                    if exist_page_num:
+                    # Handle rows with links
+                    if has_links and exist_page_num:
                         row_links = self._extract_row_links(
                             cells, text, part, use_part_detection
                         )
                         if row_links:
                             table_links.extend(row_links)
+                    
+                    # Handle item rows without links (e.g., "Item 1. Financial Statements")
+                    elif not has_links and self._is_item_header_row(text):
+                        # Look for the first sub-item with a link in subsequent rows
+                        first_subitem_link = self._find_first_subitem_link(rows, row_idx + 1)
+                        if first_subitem_link:
+                            # Create a link entry using the item text and first sub-item's link
+                            item_link_data = {
+                                "text": text,
+                                "link": first_subitem_link,  # Add 'link' key for compatibility
+                                "links": [first_subitem_link],
+                                "is_multi_section": False,
+                                "link_count": 1,
+                                "is_item_header": True  # Mark as item header for identification
+                            }
+                            if use_part_detection and part:
+                                item_link_data["part"] = part
+                            table_links.append(item_link_data)
+                            logging.info(f"Item header without link found: {text[0] if text else 'Unknown'}, using first sub-item link: {first_subitem_link}")
 
             if table_links:
                 link_info.append(table_links)
@@ -765,8 +786,77 @@ class BaseHtmlParser:
                     "Found too many tables with links, limiting results"
                 )
                 break
-
         return link_info
+    
+    def _is_item_header_row(self, text: List[str]) -> bool:
+        """
+        Check if this row is an item header (like "Item 1. Financial Statements")
+        that typically doesn't have its own link but should use the first sub-item's link.
+        
+        Args:
+            text: List of cell text content for this row
+            
+        Returns:
+            True if this appears to be an item header row
+        """
+        if not text:
+            return False
+            
+        # Check first cell for item pattern
+        first_cell = text[0].strip() if text else ""
+        
+        # Match patterns like "Item 1.", "Item 1A.", "Item 1B.", etc.
+        # Match two formats:
+        # 1. "Item X." format
+        # 2. "PART X Item X." format
+        item_pattern = re.compile(r"^(PART\s+[IVX]+\s+)?Item\s+\d+[A-Z]?\.\s*", re.IGNORECASE)
+        if item_pattern.match(first_cell):
+            return True
+            
+        # Also check for underlined item headers (common in HTML)
+        for cell_text in text:
+            if re.search(r"Item\s+\d+[A-Z]?\.\s*", cell_text, re.IGNORECASE):
+                return True
+                
+        return False
+    
+    def _find_first_subitem_link(self, rows: List, start_idx: int) -> Optional[str]:
+        """
+        Find the first sub-item link in subsequent rows.
+        
+        Args:
+            rows: List of all table rows
+            start_idx: Index to start searching from
+            
+        Returns:
+            First link found in sub-items, or None if not found
+        """
+        for i in range(start_idx, min(start_idx + 10, len(rows))):  # Look ahead max 10 rows
+            row = rows[i]
+            cells = row.find_all("td", recursive=False)
+            
+            if not cells:
+                continue
+                
+            # Check if this row has links and appears to be a sub-item
+            has_links = any(cell.find("a") for cell in cells)
+            if has_links:
+                # Check if it's indented or appears to be a sub-item
+                row_text = row.get_text().strip()
+                
+                # Skip if this looks like another main item
+                if re.match(r"^Item\s+\d+[A-Z]?\.\s*", row_text, re.IGNORECASE):
+                    break  # Stop if we hit another main item
+                    
+                # Find the first link in this row
+                for cell in cells:
+                    link_elem = cell.find("a")
+                    if (link_elem and 
+                        link_elem.attrs.get("href") and 
+                        link_elem.attrs.get("href").startswith("#")):
+                        return link_elem.attrs.get("href").split("#")[-1]
+                        
+        return None
 
     def _extract_row_links(self, cells, text, part, use_part_detection):
         """
@@ -793,7 +883,8 @@ class BaseHtmlParser:
                     link = link_elem.attrs.get("href").split("#")[-1]
                     if part:
                         return [{"part": part, "text": text, "link": link}]
-                    break
+                    else:
+                        return [{"text": text, "link": link}]
             return []
         else:
             # 10-K style: multiple links with filtering
@@ -979,6 +1070,9 @@ class BaseHtmlParser:
                         entry = {"text": text_parts, "link": first_link}
                         if part:
                             entry["part"] = part
+                        if "signature" in "".join(text_parts).lower():
+                            entry["part"] = "extracted"
+                        
                         table_links.append(entry)
 
                         if len(row_links) > 1:
@@ -1068,13 +1162,6 @@ class ParsedHtml10K(BaseHtmlParser):
             html_content, use_part_detection=False
         )
 
-    # _contains_page_numbers 方法已在基类中定义
-
-    # _is_multi_section_item 方法已在基类中定义
-
-    # _contains_multiple_page_ranges 方法已在基类中定义
-
-    # _filter_range_end_links 方法已在基类中定义
 
     @staticmethod
     @monitor_performance
@@ -1460,14 +1547,6 @@ class ParsedHtml10Q(BaseHtmlParser):
             html_content, use_part_detection=True
         )
 
-    # _contains_page_numbers 方法已在基类中定义
-
-    # _is_multi_section_item 方法已在基类中定义
-
-    # _contains_multiple_page_ranges 方法已在基类中定义
-
-    # _filter_range_end_links 方法已在基类中定义
-
     @staticmethod
     def extract_item_and_split(link_info: List[List[Dict[str, Any]]]):
         """Extract and match 10-Q specific items, handling same item numbers in different parts."""
@@ -1493,7 +1572,7 @@ class ParsedHtml10Q(BaseHtmlParser):
                 "Item 5": "Item 5.",
                 "Item 6": "Item 6.",
             },
-            "Extarect": {"Signatures": "Signature"},
+            "extracted": {"Signatures": "Signature"},
         }
 
         items_match_2 = {  # Part-prefixed items
@@ -1571,8 +1650,20 @@ class ParsedHtml10Q(BaseHtmlParser):
                         for cell in one_link["text"]:
                             if match_function(cell, match_text):
                                 link = one_link["link"]
+                                # 如果没有part信息，则根据匹配的内容推断part
+                                link_part = one_link.get("part")
+                                if link_part is None:
+                                    # 根据匹配的item内容推断part
+                                    if any("Item 1." in cell or "Item 2." in cell or "Item 3." in cell or "Item 4." in cell for cell in one_link["text"]):
+                                        if "Financial Statements" in cell or "Management's Discussion" in cell or "Quantitative and Qualitative" in cell or "Controls and Procedures" in cell:
+                                            link_part = "part i"
+                                    elif any("Item 1A" in cell or "Item 5." in cell or "Item 6." in cell for cell in one_link["text"]):
+                                        link_part = "part ii"
+                                    elif "Signature" in cell:
+                                         link_part = "extracted"
+                                
                                 if (
-                                    one_link["part"] == part
+                                    (link_part == part or (link_part is None and part in ["part i", "part ii", "extracted"]))
                                     and item_name not in item_dict
                                 ):
                                     item_dict[(part, item_name)] = link
@@ -1593,11 +1684,9 @@ class ParsedHtml10Q(BaseHtmlParser):
             item_links = list(item_links.items())
         elif not isinstance(item_links, list):
             item_links = []
-
         item_result = AssembleText.assemble_items(
             html_content, item_links, markdown=markdown
         )
-
         # Group items by part
         result = {"part i": {}, "part ii": {}, "extracted": {}}
 
@@ -1717,20 +1806,22 @@ def test_10_q_processing():
 
 
 if __name__ == "__main__":
-    # from edgar import set_identity, get_by_accession_number
-    # from edgar.company_reports import TenQ, TenK
+    # test()
+    from edgar import set_identity, get_by_accession_number
+    from edgar.company_reports import TenQ, TenK
 
-    # set_identity("1334307071@qq.com")
-    # file_id = 691553
+    set_identity("1334307071@qq.com")
+    
     # accession_number = "0000070858-24-000156"
-    # # accession_number = "0000726601-25-000013"
-    # filing = get_by_accession_number(accession_number)
-    # # print(
-    # #     ParsedHtml10K().extract_html(filing.html(), TenK.structure, markdown=True)
-    # # )
-    # print(
-    #     ParsedHtml10Q().extract_html(
-    #         filing.html(), TenQ.structure, markdown=True
-    #     )
-    # )
-    test()
+    # accession_number = "0000320193-25-000073"
+
+    accession_number = "0001628280-25-035806"
+    filing = get_by_accession_number(accession_number)
+    # result  = ParsedHtml10K().extract_html(filing.html(), TenK.structure, markdown=True)
+    
+    result = (
+        ParsedHtml10Q().extract_html(
+            filing.html(), TenQ.structure, markdown=True
+        )
+    )
+    check_item_result(result)
