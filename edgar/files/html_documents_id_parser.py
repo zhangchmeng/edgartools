@@ -1815,13 +1815,13 @@ if __name__ == "__main__":
     # accession_number = "0000070858-24-000156"
     # accession_number = "0000320193-25-000073"
 
-    accession_number = "0001628280-25-035806"
+    accession_number = "0001140361-22-011156"
     filing = get_by_accession_number(accession_number)
-    # result  = ParsedHtml10K().extract_html(filing.html(), TenK.structure, markdown=True)
+    result  = ParsedHtml10K().extract_html(filing.html(), TenK.structure, markdown=True)
     
-    result = (
-        ParsedHtml10Q().extract_html(
-            filing.html(), TenQ.structure, markdown=True
-        )
-    )
+    # result = (
+    #     ParsedHtml10Q().extract_html(
+    #         filing.html(), TenQ.structure, markdown=True
+    #     )
+    # )
     check_item_result(result)
