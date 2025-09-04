@@ -116,9 +116,9 @@ def detect_signature(text: str) -> bool:
         matched = 'to be signed on its behalf by the undersigned' in text
     return matched
 
-
 def detect_int_items(text: pd.Series):
-    return text.str.extract(int_item_pattern, expand=False, flags=re.IGNORECASE | re.MULTILINE)
+    int_item_pattern=r"\A(Item\s{1,3}[0-9]{1,2}[A-Z]?)\.?"
+    return text.str.extract(int_item_pattern, expand=False, flags=re.IGNORECASE)
 
 def detect_part(text: pd.Series) -> pd.Series:
     """
@@ -281,6 +281,9 @@ def chunks2df(chunks: List[List[Block]],
                                      Part=lambda df: detect_part(df.Text),
                                      Item=lambda df: item_detector(df.Text)
                                      )
+
+    # import pdb;pdb.set_trace()
+    # chunk_df[(chunk_df.Item.notnull())|(chunk_df.Part.notnull())]
     # If the row is 'toc' then set the item and part to empty
     chunk_df.loc[chunk_df.Toc.notnull() & chunk_df.Toc, 'Item'] = ""
     # if item_adjuster:

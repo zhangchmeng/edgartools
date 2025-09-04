@@ -324,8 +324,7 @@ class TableBlock(Block):
     def __repr__(self):
         return str(self)
 
-
-item_pattern = r"(?:ITEM|Item)\s+(?:[0-9]{1,2}[A-Z]?\.?|[0-9]{1,2}\.[0-9]{2})"
+item_pattern = r"(?:ITEM|Item)\s+(?:[0-9]{1,2}[A-Z]?\.?|[0-9]{1,2}\.[0-9]{2})(?![\s\n]*[0-9])"
 # part_pattern = r"^\b(PART\s+[IVXLC]+)\b"
 part_pattern = re.compile(r"^\b(PART\s+[IVXLC]+)\b", re.IGNORECASE)
 
@@ -388,7 +387,14 @@ class HtmlDocument:
             else:
                 if block.text.endswith("\n"):
                     if current_block:
-                        if current_block.inline and block.inline:
+                        if current_block.text and current_block.text.strip() in ("PART", "ITEM"):
+                            if not block.text.strip():
+                                current_block.text  = current_block.text.strip() + " "
+                            else:
+                                current_block.text += block.text
+                                compressed_blocks.append(current_block)
+                                current_block = None  # Reset the current block
+                        elif current_block.inline and block.inline: 
                             current_block.text += block.text
                             compressed_blocks.append(current_block)
                             current_block = None  # Reset the current block
@@ -425,7 +431,8 @@ class HtmlDocument:
     def extract_text(cls, start_element: Tag):
         # Remove page numbers
         decompose_page_numbers(start_element)
-
+        merge_empty_div_elements(start_element)
+        
         # Now find the full text
         blocks: List[Block] = extract_and_format_content(start_element)
         # Compress the blocks
@@ -492,6 +499,7 @@ class HtmlDocument:
         item_header_detected = False
 
         for i, block in enumerate(self.blocks):
+
             if isinstance(block, TableBlock) or block.metadata.get('element') in ['ol', 'ul']:
                 if isinstance(block, TableBlock) and ignore_tables:
                     continue
@@ -591,11 +599,15 @@ def extract_and_format_content(element) -> List[Block]:
                           text_type='string')
                 ]
     elif isinstance(element, NavigableString):
-        return [TextBlock(text=fixup(element.text), element=element.name, text_type='string')]
+        return [TextBlock(text=fixup(element.string), element=None, text_type='string')]
     else:
+        # First, merge consecutive text nodes within this element
+        merge_consecutive_text_nodes(element)
+        
         inline = is_inline(element)
         blocks: List[Block] = []
         len_children = len(element.contents)
+
         for index, child in enumerate(element.children):
             if child.name:
                 blocks.extend(extract_and_format_content(child))
@@ -613,6 +625,8 @@ def extract_and_format_content(element) -> List[Block]:
                     if not blocks[-1].get_text().endswith('\n'):  # Don't add a space after a new line
                         blocks[-1].text += stripped_string
                 else:
+                    # if "II OTHER" in stripped_string:
+                    #     import pdb;pdb.set_trace()
                     blocks.append(TextBlock(stripped_string, inline=inline, element=element.name, text_type='string'))
 
         return blocks
@@ -677,6 +691,47 @@ def decompose_toc_links(start_element: Tag):
     for toc_tag in toc_tags:
         toc_tag.decompose()
 
+
+def merge_consecutive_text_nodes(element):
+    """Merge consecutive NavigableString children within an element."""
+    if not hasattr(element, 'contents'):
+        return
+        
+    contents = list(element.contents)
+    i = 0
+    while i < len(contents) - 1:
+        current = contents[i]
+        next_item = contents[i + 1]
+        
+        # Check if both are NavigableString instances
+        if (isinstance(current, NavigableString) and 
+            isinstance(next_item, NavigableString)):
+            # Merge the text content
+            merged_text = current.string + next_item.string
+            # Replace current with merged text
+            current.replace_with(merged_text)
+            # Remove the next item
+            next_item.extract()
+            # Update contents list
+            contents = list(element.contents)
+            # Don't increment i, check the same position again
+        else:
+            i += 1
+
+def merge_empty_div_elements(start_element: Tag):
+    # Find all inline-block div elements with width style (used as spacers)
+    inline_divs = start_element.find_all('div', style=lambda x: x and 'display:inline-block' in x and 'width:' in x)
+    
+    # Iterate through all inline-block div elements
+    for div in inline_divs:
+        # Check if div content is empty or only contains &nbsp; or whitespace
+        content = div.get_text().strip()
+        if not content or content == '\xa0' or content.isspace():
+            # 使用NavigableString替换空的inline-block div
+            div.replace_with(NavigableString(" "))
+    
+    # Recursively merge text nodes in all elements
+    return start_element
 
 def decompose_page_numbers(start_element: Tag):
     span_tags_with_numbers = start_element.find_all('span', string=re.compile(r'^\d{1,3}$'))
@@ -764,16 +819,20 @@ def is_inline(tag):
         for style in styles:
             if style.strip().lower().startswith('display'):
                 property_value = style.split(':')
-                if len(property_value) > 1 and property_value[1].strip().lower() == 'inline':
-                    return True
-
+                if len(property_value) > 1:
+                    display_value = property_value[1].strip().lower()
+                    if display_value in ['inline', 'inline-block']:
+                        return True
     return False
 
 
 def fixup(text: str):
-    # This pattern matches one or more non-breaking space (\xa0) or one or more whitespace characters (\s+)
-    text = re.sub(r'\xa0|[^\S\n]+', ' ', text)
-
+    # Replace non-breaking spaces (\xa0) with regular spaces
+    # Keep other whitespace as-is to preserve formatting
+    text = text.replace('\xa0', ' ')
+    # Normalize multiple consecutive spaces to single space
+    text = re.sub(r' +', ' ', text)
+    
     return text
 
 
