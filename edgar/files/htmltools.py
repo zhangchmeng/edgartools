@@ -282,10 +282,9 @@ def chunks2df(chunks: List[List[Block]],
                                      Item=lambda df: item_detector(df.Text)
                                      )
 
-    # import pdb;pdb.set_trace()
     # chunk_df[(chunk_df.Item.notnull())|(chunk_df.Part.notnull())]
     # If the row is 'toc' then set the item and part to empty
-    chunk_df.loc[chunk_df.Toc.notnull() & chunk_df.Toc, 'Item'] = ""
+    chunk_df.loc[chunk_df.Item.str.contains('\n', na=False), 'Item'] = np.nan
     # if item_adjuster:
     # chunk_df = item_adjuster(chunk_df, **{'item_structure': item_structure, 'item_detector': item_detector})
     # Foward fill item and parts
@@ -300,8 +299,8 @@ def chunks2df(chunks: List[List[Block]],
     # After forward fill handle the signature at the bottom
     signature_rows = chunk_df[chunk_df.Signature]
     if len(signature_rows) > 0:
-        signature_loc = signature_rows.index[0]
-        chunk_df.loc[signature_loc:, 'Item'] = pd.NA
+        signature_loc = signature_rows.index[-1]
+        chunk_df.loc[signature_loc:, 'Item'] = np.nan
         chunk_df.Signature = chunk_df.Signature.fillna("")
 
     # Fill the Item column with "" then set to title case
@@ -358,6 +357,16 @@ class ChunkedDocument:
 
     def list_items(self):
         return [item for item in self._chunked_data.Item.drop_duplicates().tolist() if item]
+
+    def part_item_res(self):
+        """获取dataframe中实际存在的part和item组合"""
+        valid_rows = self._chunked_data[
+            (self._chunked_data.Part != "") & 
+            (self._chunked_data.Item != "")
+        ]
+        combinations = valid_rows[['Part', 'Item']].drop_duplicates()
+        return combinations.to_dict(orient='records')
+
 
     def _chunks_for(self, item_or_part: str, col: str = 'Item'):
         chunk_df = self._chunked_data
