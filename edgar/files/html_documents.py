@@ -379,6 +379,8 @@ class HtmlDocument:
         compressed_blocks = []
         current_block = None
         for i, block in enumerate(blocks):
+            # if block.get_text().strip().startswith('PART I'):
+            #     import pdb;pdb.set_trace()
             if isinstance(block, TableBlock):
                 if current_block:
                     compressed_blocks.append(current_block)
@@ -518,7 +520,8 @@ class HtmlDocument:
                 # Check if the block is an "Item" header
                 is_item_header = bool(re.match(item_pattern, block.text))
                 is_part_header = bool(part_pattern.match(block.text))
-
+                # if "PART I" in block.text.upper():
+                #     import pdb;pdb.set_trace()
                 if is_part_header:
                      # Yield the current chunk before starting a new one with the "Part" header
                     if current_chunk:
@@ -625,10 +628,7 @@ def extract_and_format_content(element) -> List[Block]:
                     if not blocks[-1].get_text().endswith('\n'):  # Don't add a space after a new line
                         blocks[-1].text += stripped_string
                 else:
-                    # if "II OTHER" in stripped_string:
-                    #     import pdb;pdb.set_trace()
                     blocks.append(TextBlock(stripped_string, inline=inline, element=element.name, text_type='string'))
-
         return blocks
 
 
@@ -827,6 +827,7 @@ def is_inline(tag):
 
 
 def fixup(text: str):
+    # Replace HTML entity &nbsp; with regular spaces
     # Replace non-breaking spaces (\xa0) with regular spaces
     # Keep other whitespace as-is to preserve formatting
     text = text.replace('\xa0', ' ')

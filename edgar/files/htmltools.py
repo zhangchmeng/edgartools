@@ -4,8 +4,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from functools import partial
 from io import StringIO
-from typing import Any, Optional, Dict, Callable
-from typing import List
+from typing import Any, Optional, Dict, Callable, List, Union, Sequence
 
 import numpy as np
 import pandas as pd
@@ -358,15 +357,52 @@ class ChunkedDocument:
     def list_items(self):
         return [item for item in self._chunked_data.Item.drop_duplicates().tolist() if item]
 
-    def part_item_res(self):
-        """获取dataframe中实际存在的part和item组合"""
-        valid_rows = self._chunked_data[
-            (self._chunked_data.Part != "") & 
-            (self._chunked_data.Item != "")
-        ]
-        combinations = valid_rows[['Part', 'Item']].drop_duplicates()
-        return combinations.to_dict(orient='records')
-
+    def part_item_res(self, markdown: bool = True) -> Dict[str, Dict[str, str]]:
+        """Get the actual part and item combinations that exist in the dataframe"""
+        # Get all non-empty Part and Item combinations
+        df = self._chunked_data
+        
+        # Filter rows with both Part and Item
+        filtered_df = df[(df['Part'].notna()) & (df['Item'].notna())].copy()
+        
+        # Create result dictionary
+        result = {}
+        
+        # Group by Part and collect Items and content under each Part
+        for part in filtered_df['Part'].dropna().unique():
+            part_items = filtered_df[filtered_df['Part'] == part]['Item'].dropna().unique().tolist()
+            if part_items:
+                part_key = part.lower()  # Convert part to lowercase
+                result[part_key] = {}
+                for item in sorted(part_items):
+                    item_key = item.lower()  # Convert item to lowercase
+                    # Get text content for this part and item
+                    chunks = list(self._chunks_mul_for(part, item))
+                    if chunks:
+                        if markdown:
+                            content = self.clean_part_line("".join([text for text in self.assemble_block_markdown(chunks)]))
+                        else:
+                            content = self.clean_part_line("".join([text for text in self.assemble_block_text(chunks)]))
+                        result[part_key][item_key] = content
+                    else:
+                        result[part_key][item_key] = ""
+        
+        # Add extracted section containing introduction and signature
+        result["extracted"] = {}
+        
+        # Get signature content
+        try:
+            signature_content = self.get_signature(markdown=markdown)
+            result["extracted"]["signature"] = signature_content if signature_content else ""
+        except:
+            result["extracted"]["signature"] = ""
+        
+        try:
+            introduction_content = self.get_introduction(markdown=markdown)
+            result["extracted"]["introduction"] = introduction_content if introduction_content else ""
+        except:
+            result["extracted"]["introduction"] = ""
+        return result
 
     def _chunks_for(self, item_or_part: str, col: str = 'Item'):
         chunk_df = self._chunked_data

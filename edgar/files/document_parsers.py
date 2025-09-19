@@ -3,7 +3,7 @@ import logging
 from edgar.files.base_parser import BaseHtmlParser
 from edgar.files.text_assembler import AssembleText
 from edgar.files.timeout_utils import monitor_performance
-
+from edgar.files.extract_item_ai import extract_items_with_ai
 
 class ParsedHtml10K(BaseHtmlParser):
     @staticmethod
@@ -372,6 +372,55 @@ class ParsedHtml10K(BaseHtmlParser):
 
         return item_links
 
+    @staticmethod
+    def classify_items_to_parts(item_links: List[tuple[str, List[str]]], structure) -> List[tuple[tuple[str, str], str]]:
+        """
+        Classify items into their corresponding parts
+        
+        Args:
+            item_links: List of item links in format [(item_name, [link1, link2, ...]), ...]
+            structure: Object containing part and item structure information
+            
+        Returns:
+            List[tuple[tuple[str, str], str]]: [
+                (('part i', 'Item 4'), 'i3b21a042e4b24a6a8aca8d89b8dbe271_265'),
+                (('part i', 'Item 1'), 'i3b21a042e4b24a6a8aca8d89b8dbe271_271'),
+                (('part ii', 'Item 5'), 'i3b21a042e4b24a6a8aca8d89b8dbe271_649'),
+                ...
+            ]
+        """
+        # Create item to part mapping
+        item_to_part = {}
+        for part_name in structure.structure:
+            part_items = structure.get_part(part_name)
+            for item_name in part_items:
+                item_to_part[item_name.lower()] = part_name.lower()
+        
+        # Build result list
+        result = []
+        
+        # Classify items to corresponding parts
+        for item_name, links in item_links:
+            item_name_lower = item_name.lower()
+            part_name = item_to_part.get(item_name_lower)
+            
+            # Create tuple for each link
+            for link in links:
+                if part_name:
+                    result.append(((part_name, item_name), link))
+                else:
+                    result.append((('extracted', item_name), link))
+        
+        # Record classification statistics
+        total_links = sum(len(links) for _, links in item_links)
+        classified_links = len([r for r in result if r[0][0] != 'extracted'])
+        extracted_links = len([r for r in result if r[0][0] == 'extracted'])
+        
+        logging.info(
+            f"Item classification summary: {classified_links} links classified to parts, {extracted_links} links extracted, {total_links} total links"
+        )
+        return result
+
     def extract_html(
         self, html_content: str, structure, markdown: bool = False
     ) -> Dict[str, Any]:
@@ -381,29 +430,51 @@ class ParsedHtml10K(BaseHtmlParser):
             2. Have a separate cell storing page numbers
         """
         index_table = self.extract_html_link_info(html_content)
-        item_links = self.extract_item_and_split(index_table)
+        raw_item_links = self.extract_item_and_split(index_table)
+        item_links = self.classify_items_to_parts(raw_item_links, structure)
+        
+
+        if not item_links or len(item_links) < 10:
+            new_item_links = extract_items_with_ai(structure.structure, index_table)
+            if new_item_links:
+                item_links = new_item_links
+
         item_result = AssembleText.assemble_items(
             html_content, item_links, markdown=markdown
         )
-
-        item_to_part = {}
-        for part_name in structure.structure:
-            part_items = structure.get_part(part_name)
-            for item_name in part_items:
-                item_to_part[item_name.lower()] = part_name.lower()
-
-        # Step 4: Group items by part
+        
+        # Step 4: Group items by part based on new item_result structure
         result = {part_name.lower(): {} for part_name in structure.structure}
         result["extracted"] = {}
 
-        for item_name, content in item_result.items():
-            item_name = item_name.lower()
-            part_name = item_to_part.get(item_name)
-            if part_name:
-                result[part_name][item_name] = content
+        for key, content in item_result.items():
+            if isinstance(key, tuple) and len(key) == 2:
+                # Handle tuple format: ('part i', 'Item 1')
+                part_name, item_name = key
+                part_name = part_name.lower()
+                item_name = item_name.lower()
+                if part_name in result:
+                    result[part_name][item_name] = content
+                else:
+                    result["extracted"][item_name] = content
             else:
-                result["extracted"][item_name] = content
+                # Handle string format: 'Item 0', 'Signature'
+                item_name = str(key).lower()
+                # Try to find which part this item belongs to
+                item_to_part = {}
+                for part_name in structure.structure:
+                    part_items = structure.get_part(part_name)
+                    for part_item_name in part_items:
+                        item_to_part[part_item_name.lower()] = part_name.lower()
+                
+                part_name = item_to_part.get(item_name)
+                if part_name:
+                    result[part_name][item_name] = content
+                else:
+                    result["extracted"][item_name] = content
+        
         return result
+
 
 
 class ParsedHtml10Q(BaseHtmlParser):
@@ -598,6 +669,12 @@ class ParsedHtml10Q(BaseHtmlParser):
             item_links = list(item_links.items())
         elif not isinstance(item_links, list):
             item_links = []
+
+        if not item_links or len(item_links) < 5:
+            new_item_links = extract_items_with_ai(structure.structure, index_table)
+            if new_item_links:
+                item_links = new_item_links
+
         item_result = AssembleText.assemble_items(
             html_content, item_links, markdown=markdown
         )

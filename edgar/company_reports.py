@@ -283,6 +283,12 @@ class TenK(CompanyReport):
     def id_parse_document(self, markdown:bool=False):
         from edgar.files.html_documents_id_parser import ParsedHtml10K
         return ParsedHtml10K().extract_html(self._filing.html(), self.structure, markdown=markdown)
+    
+    def get_re_parse_res(self, markdown:bool=True):
+        return self.chunked_document.part_item_res(markdown=markdown)
+
+    def get_id_parse_res(self, markdown:bool=True):
+        return self.id_parse_document(markdown=markdown)
             
     def __str__(self):
         return f"""TenK('{self.company}')"""
@@ -296,6 +302,10 @@ class TenK(CompanyReport):
             if re.match(r'^\b(PART\s+[IVXLC]+)\b', last_line):
                 item_text = item_text.rstrip(last_line)
         return item_text
+
+    def get_all_part_item_res(self, markdown: bool = True):
+        res = self.id_parse_document(markdown)
+        text_res = self.chunked_document.get_all_part_item_text()
 
     def get_item_with_part(self, part: str, item: str, markdown:bool=True):
         if not part:
@@ -477,7 +487,13 @@ class TenQ(CompanyReport):
     def id_parse_document(self, markdown:bool=True):
         from edgar.files.html_documents_id_parser import ParsedHtml10Q
         return ParsedHtml10Q().extract_html(self._filing.html(), self.structure, markdown=markdown)
-            
+
+    def get_re_parse_res(self, markdown:bool=True):
+        return self.chunked_document.part_item_res(markdown=markdown)
+
+    def get_id_parse_res(self, markdown:bool=True):
+        return self.id_parse_document(markdown=markdown)
+
     @property
     @lru_cache(maxsize=1)
     def chunked_document(self):
@@ -549,11 +565,11 @@ class TwentyF(CompanyReport):
     structure = FilingStructure({
         "PART I": {
             "ITEM 1": {
-                "Title": "Identity of Directors, Senior Management, and Advisers",
+                "Title": "Identity of Directors, Senior Management and Advisers",
                 "Description": "Information about the company's directors, senior management, and advisers."
             },
             "ITEM 2": {
-                "Title": "Offer Statistics and Expected Timetable",
+                "Title": "Offer Statistics and Expected Timetable", 
                 "Description": "Details on recent and expected offers of securities."
             },
             "ITEM 3": {
@@ -566,17 +582,14 @@ class TwentyF(CompanyReport):
             },
             "ITEM 4A": {
                 "Title": "Unresolved Staff Comments",
-                "Description": "Any comments from the SEC staff on the company’s previous filings that " +
-                               "remain unresolved."
-            }
-        },
-        "PART II": {
+                "Description": "Any comments from the SEC staff on the company's previous filings that remain unresolved."
+            },
             "ITEM 5": {
                 "Title": "Operating and Financial Review and Prospects",
-                "Description": "Management’s discussion and analysis of financial condition and results of operations."
+                "Description": "Management's discussion and analysis of financial condition and results of operations."
             },
             "ITEM 6": {
-                "Title": "Directors, Senior Management, and Employees",
+                "Title": "Directors, Senior Management and Employees",
                 "Description": "Information about the company's directors, senior management, and employees."
             },
             "ITEM 7": {
@@ -590,9 +603,7 @@ class TwentyF(CompanyReport):
             "ITEM 9": {
                 "Title": "The Offer and Listing",
                 "Description": "Details on the company's securities and markets where they are traded."
-            }
-        },
-        "PART III": {
+            },
             "ITEM 10": {
                 "Title": "Additional Information",
                 "Description": "Additional information such as share capital, memoranda, and articles of association."
@@ -606,9 +617,9 @@ class TwentyF(CompanyReport):
                 "Description": "Detailed information on securities other than equity."
             }
         },
-        "PART IV": {
+        "PART II": {
             "ITEM 13": {
-                "Title": "Defaults, Dividend Arrearages, and Delinquencies",
+                "Title": "Defaults, Dividend Arrearages and Delinquencies",
                 "Description": "Information about defaults on payments and arrearages."
             },
             "ITEM 14": {
@@ -620,20 +631,62 @@ class TwentyF(CompanyReport):
                 "Description": "Assessment of the effectiveness of disclosure controls and internal controls over financial reporting."
             },
             "ITEM 16": {
-                "Title": "Various Disclosures",
-                "Description": "Includes disclosures related to audit committee financial experts, code of ethics, " +
-                               "principal accountant fees and services, and other corporate governance matters."
+                "Title": "Reserved",
+                "Description": "Reserved item."
+            },
+            "ITEM 16A": {
+                "Title": "Audit Committee Financial Expert",
+                "Description": "Information about the audit committee financial expert."
+            },
+            "ITEM 16B": {
+                "Title": "Code of Ethics",
+                "Description": "Information about the company's code of ethics."
+            },
+            "ITEM 16C": {
+                "Title": "Principal Accountant Fee and Services",
+                "Description": "Information about fees paid to principal accountants."
+            },
+            "ITEM 16D": {
+                "Title": "Exemptions from the Listing Standards for Audit Committees",
+                "Description": "Information about any exemptions from audit committee requirements."
+            },
+            "ITEM 16E": {
+                "Title": "Purchases of Equity Securities by the Issuer and Affiliated Purchasers",
+                "Description": "Information about company and affiliate purchases of equity securities."
+            },
+            "ITEM 16F": {
+                "Title": "Change in Registrant's Certifying Accountant",
+                "Description": "Information about changes in the company's certifying accountant."
+            },
+            "ITEM 16G": {
+                "Title": "Corporate Governance",
+                "Description": "Information about corporate governance practices."
+            },
+            "ITEM 16H": {
+                "Title": "Mine Safety Disclosure",
+                "Description": "Information about mine safety."
+            },
+            "ITEM 16I": {
+                "Title": "Disclosure regarding Foreign Jurisdictions that Prevent Inspections",
+                "Description": "Information about foreign jurisdictions preventing inspections."
+            },
+            "ITEM 16J": {
+                "Title": "Insider Trading Policies",
+                "Description": "Information about insider trading policies."
+            },
+            "ITEM 16K": {
+                "Title": "Cybersecurity",
+                "Description": "Information about cybersecurity practices and risks."
             }
         },
-        "PART V": {
+        "PART III": {
             "ITEM 17": {
                 "Title": "Financial Statements",
                 "Description": "Financial statements prepared in accordance with or reconciled to U.S. GAAP or IFRS."
             },
             "ITEM 18": {
                 "Title": "Financial Statements",
-                "Description": "If different from Item 17, financial statements prepared in accordance with " +
-                               "home country standards."
+                "Description": "If different from Item 17, financial statements prepared in accordance with home country standards."
             },
             "ITEM 19": {
                 "Title": "Exhibits",

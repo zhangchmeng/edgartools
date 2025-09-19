@@ -29,36 +29,6 @@ __all__ = [
 
 
 def check_item_result(result):
-    """
-    Check and display the results of item extraction.
-
-    Args:
-        result: The extraction result to check
-
-    Returns:
-        str: Formatted result summary
-    """
-    if not result:
-        return "No result to check"
-
-    items = result.get("items", {})
-    if not items:
-        return "No items found in result"
-
-    summary = []
-    summary.append(f"Found {len(items)} items:")
-
-    for item_name, content in items.items():
-        if isinstance(content, str):
-            content_length = len(content)
-            summary.append(f"  {item_name}: {content_length} characters")
-        else:
-            summary.append(f"  {item_name}: {type(content).__name__}")
-
-    return "\n".join(summary)
-
-
-def check_item_result(result):
     # Count all items
     total_items = 0
     empty_items = 0
