@@ -13,7 +13,6 @@ class LinkPosition(BaseModel):
     part: str = Field(..., description="part")
     item: str = Field(..., description="item")
 
-
 class LinkResult(BaseModel):
     links: list[LinkPosition]
 
@@ -79,27 +78,81 @@ def extract_items_with_ai(
 
     # Construct prompt
     prompt = f"""
-    You are a professional SEC report analyst. Please classify the following document table of contents items into corresponding Parts and Items according to the standard structure of report.
-
-    Standard module structure:
+    You are a professional SEC report analyst. Your task is to classify document table of contents items into corresponding Parts and Items according to the EXACT standard structure provided.
+    CRITICAL REQUIREMENT: You MUST follow the Standard module structure with ZERO deviation. Any content that does not EXACTLY match the standard structure MUST be classified as "extracted".
+    
+    Standard module structure (THIS IS THE ONLY VALID REFERENCE):
+    '''
     {json.dumps(standard_modules, indent=2, ensure_ascii=False)}
-
-    Document table of contents:
+    '''
+    
+    Document table of contents to classify:
+    '''
     {json.dumps(flattened_toc, indent=2, ensure_ascii=False)}
+    '''
+    
+    CLASSIFICATION PROCESS:
+    
+    STEP 1 - EXACT MATCHING VERIFICATION:
+    For each table of contents item, perform EXACT string matching:
+    - Check if the Part name exists EXACTLY in the Standard module structure (case-sensitive)
+    - Check if the Item name exists EXACTLY under that Part in the Standard module structure
+    - Only proceed to Part/Item classification if BOTH conditions are met
+    
+    STEP 2 - MANDATORY CLASSIFICATION RULES:
+    
+    A. STANDARD PART/ITEM CLASSIFICATION (Only when EXACT match found):
+       - Part names MUST be EXACTLY: "PART I", "PART II", "PART III", or "PART IV" (uppercase, with space)
+       - Item names MUST be EXACTLY as defined in the Standard module structure
+       - NO variations, abbreviations, or modifications allowed
+       - Examples of VALID classifications:
+         * part: "PART I", item: "ITEM 1"
+         * part: "PART I", item: "ITEM 2" 
+         * part: "PART II", item: "ITEM 5"
+    
+    B. EXTRACTED CLASSIFICATION (When NO exact match found):
+       - part: "extracted"
+       - item: [USE ORIGINAL TITLE TEXT EXACTLY AS IT APPEARS]
+       - Preserve all formatting, capitalization, and special characters
+       - Examples of content that MUST be classified as "extracted":
+         * Any title not matching standard items exactly
+         * "OVERVIEW", "SIGNATURES", "TABLE OF CONTENTS"
+         * Company-specific sections like "Citigroup's Five Reportable Business Segments"
+         * Any content with different capitalization than standard structure
+    
+    STEP 3 - PATTERN RECOGNITION FOR GROUPING:
+    - Multiple links can map to the same standard Part/Item if they represent subsections
+    - Look for continuation patterns (same item split across multiple pages)
+    - Group related content only if it matches the SAME standard Part/Item exactly
+    
+    STEP 4 - MANDATORY VALIDATION CHECKLIST:
+    Before finalizing each classification, verify:
+    ✓ Part name exists EXACTLY in Standard module structure
+    ✓ Item name exists EXACTLY under that Part in Standard module structure  
+    ✓ Case sensitivity is correct (PART I, not part i)
+    ✓ Spacing is correct (PART I, not PARTI)
+    ✓ If ANY verification fails → classify as "extracted"
+    
+    STEP 5 - COMMON CLASSIFICATION EXAMPLES:
+    
+    CORRECT Standard Classifications:
+    - "MANAGEMENT'S DISCUSSION AND ANALYSIS" → part: "PART I", item: "ITEM 2"
+    - "CONSOLIDATED FINANCIAL STATEMENTS" → part: "PART I", item: "ITEM 1"  
+    - "UNREGISTERED SALES OF EQUITY SECURITIES" → part: "PART II", item: "ITEM 2"
+    
+    CORRECT Extracted Classifications:
+    - "OVERVIEW" → part: "extracted", item: "OVERVIEW"
+    - "SIGNATURES" → part: "extracted", item: "SIGNATURES"
+    - "Citigroup's Five Reportable Business Segments" → part: "extracted", item: "Citigroup's Five Reportable Business Segments"
+    
+    FORBIDDEN ACTIONS:
+    ❌ Creating new Part names (like "part i" instead of "PART I")
+    ❌ Creating new Item names not in the standard structure
+    ❌ Modifying standard Part/Item names in any way
+    ❌ Guessing or approximating matches - use "extracted" instead
 
-    Please analyze each table of contents item's title and content, mapping them to the most appropriate Part and Item. For items that cannot be clearly classified, mark them as "extracted".
-
-
-    [
-        {{
-            "link_id": "link_id of the table of contents item",
-            "part": "part i" or "part ii" or "part iii" or "part iv" or "extracted",
-            "item": "Item 1" or "Item 2" etc., if extracted then use corresponding title
-        }}
-    ]
-
-    Classification rule: Signatures are typically marked as part: extracted
-
+    REMEMBER: When in doubt, classify as "extracted" rather than forcing a match to the standard structure.
+    
     Based on your analysis, provide the retrieval parameters in this exact format:
     {out_parser.get_format_string()}
     """
@@ -132,8 +185,10 @@ def extract_items_with_ai(
         # Convert to expected format: List[Tuple[Tuple[str, str], str]]
         results = []
         for link_pos in structured_output.links:
-            results.append(((link_pos.part, link_pos.item), link_pos.link_id))
+            part = link_pos.part.lower()
+            item = link_pos.item
 
+            results.append(((part, item), link_pos.link_id))
         return results
 
     except Exception as e:

@@ -659,21 +659,69 @@ class ParsedHtml10Q(BaseHtmlParser):
         item_links = [(name, link) for name, link in item_dict.items()]
         return item_links
 
+    def check_10q_index_table(self, index_table: List[List[Dict[str, Any]]]) -> bool:
+        """
+        检查传入的index_table，如果符合第一种含有part有效，否则返回False
+        
+        Args:
+            index_table: 从extract_html_link_info返回的表格数据结构
+                        List[List[Dict[str, Any]]]格式
+        
+        Returns:
+            bool: 如果index_table中包含part信息则返回True，否则返回False
+        
+        Examples:
+            有效格式 (ava_ml): 包含'part'字段的字典
+            [{'part': 'part i', 'text': ['Item 1.', 'Financial Statements', '1'], 'link': '...'}, ...]
+            
+            无效格式 (inva_ml): 不包含'part'字段的字典
+            [{'text': ['Item 1.', 'Financial Statements (unaudited)', ''], 'link': '...'}, ...]
+        """
+        # ava_ml = [[{'part': 'part i', 'text': ['Item 1.', 'Financial Statements', '1'], 'link': 'i056866be11a54295b8c21e0877b67331_13'}, {'part': 'part i', 'text': ['Item 2.', 'Management's Discussion and Analysis of Financial Condition and Results of Operations', '12'], 'link': 'i056866be11a54295b8c21e0877b67331_67'}, {'part': 'part i', 'text': ['Item 3.', 'Quantitative and Qualitative Disclosures About Market Risk', '18'], 'link': 'i056866be11a54295b8c21e0877b67331_145'}, {'part': 'part i', 'text': ['Item 4.', 'Controls and Procedures', '18'], 'link': 'i056866be11a54295b8c21e0877b67331_148'}, {'part': 'part ii', 'text': ['Item 1.', 'Legal Proceedings', '19'], 'link': 'i056866be11a54295b8c21e0877b67331_154'}, {'part': 'part ii', 'text': ['Item 1A.', 'Risk Factors', '20'], 'link': 'i056866be11a54295b8c21e0877b67331_157'}, {'part': 'part ii', 'text': ['Item 2.', 'Unregistered Sales of Equity Securities and Use of Proceeds', '22'], 'link': 'i056866be11a54295b8c21e0877b67331_160'}, {'part': 'part ii', 'text': ['Item 3.', 'Defaults Upon Senior Securities', '22'], 'link': 'i056866be11a54295b8c21e0877b67331_163'}, {'part': 'part ii', 'text': ['Item 4.', 'Mine Safety Disclosures', '22'], 'link': 'i056866be11a54295b8c21e0877b67331_166'}, {'part': 'part ii', 'text': ['Item 5.', 'Other Information', '22'], 'link': 'i056866be11a54295b8c21e0877b67331_169'}, {'part': 'part ii', 'text': ['Item 6.', 'Exhibits', '22'], 'link': 'i056866be11a54295b8c21e0877b67331_175'}]]
+        # inva_ml = [[{'text': ['Item 1.', 'Financial Statements (unaudited)', ''], 'link': 'item_1___financial_statements'}, {'text': ['', 'Condensed Consolidated Statements of Financial Condition', '1'], 'link': 'condensed_consolidated_statements_financ'}, {'text': ['', 'Condensed Consolidated Statements of Income', '2'], 'link': 'statements_of_income'}, {'text': ['', 'Condensed Consolidated Statements of Comprehensive Income', '3'], 'link': 'comprehensive_income'}, {'text': ['', 'Condensed Consolidated Statements of Changes in Equity', '4'], 'link': 'changes_in_equity'}, {'text': ['', 'Condensed Consolidated Statements of Cash Flows', '6'], 'link': 'cash_flows'}, {'text': ['', 'Notes to Condensed Consolidated Financial Statements', '7'], 'link': 'notes_to_the_condensed'}, {'text': ['Item 2.', 'Management's Discussion and Analysis of Financial Condition and Results of Operations', '38'], 'link': 'item_2_management'}, {'text': ['Item 3.', 'Quantitative and Qualitative Disclosures About Market Risk', '72'], 'link': 'item_3_quantitative'}, {'text': ['Item 4.', 'Controls and Procedures', '73'], 'link': 'item_4_controls_procedures'}], [{'text': ['Item 1.', 'Legal Proceedings', '74'], 'link': 'item_1__legal_proceedings'}, {'text': ['Item 1A.', 'Risk Factors', '75'], 'link': 'item_1a_risk_factors'}, {'text': ['Item 2.', 'Unregistered Sales of Equity Securities and Use of Proceeds', '76'], 'link': 'item_2__unregistered_sales_equity_securi'}, {'text': ['Item 6.', 'Exhibits', '77'], 'link': 'exhibits'}], [{'part': 'extracted', 'text': ['', 'Signatures', '78'], 'link': 'signature_page'}]]
+        
+        if not index_table or not isinstance(index_table, list):
+            return False
+        
+        # 遍历所有表格
+        for table in index_table:
+            if not isinstance(table, list):
+                continue
+                
+            # 遍历表格中的每一行
+            for row in table:
+                if isinstance(row, dict) and 'part' in row:
+                    # 如果找到包含'part'字段的行，说明是有效格式
+                    part_value = row.get('part')
+                    if part_value and isinstance(part_value, str):
+                        # 检查part值是否为有效的part格式（如'part i', 'part ii'等）
+                        part_lower = part_value.lower().strip()
+                        if part_lower.startswith('part ') and len(part_lower) > 5:
+                            return True
+        
+        # 如果没有找到任何包含有效part信息的行，返回False
+        return False
+
+
     def extract_html(
         self, html_content: str, structure, markdown: bool = True
     ) -> Dict[str, Any]:
         """Extract 10-Q items from HTML content, handling same item numbers in different parts."""
         index_table = self.extract_html_link_info(html_content)
-        item_links = self.extract_item_and_split(index_table)
-        if isinstance(item_links, dict):
-            item_links = list(item_links.items())
-        elif not isinstance(item_links, list):
-            item_links = []
 
-        if not item_links or len(item_links) < 5:
-            new_item_links = extract_items_with_ai(structure.structure, index_table)
-            if new_item_links:
-                item_links = new_item_links
+        if self.check_10q_index_table(index_table):
+            item_links = self.extract_item_and_split(index_table)
+            if isinstance(item_links, dict):
+                item_links = list(item_links.items())
+            elif not isinstance(item_links, list):
+                item_links = []
+
+            if not item_links or len(item_links) < 5:
+                new_item_links = extract_items_with_ai(structure.structure, index_table)
+                if new_item_links:
+                    item_links = new_item_links
+        else:
+            item_links = extract_items_with_ai(structure.structure, index_table)
 
         item_result = AssembleText.assemble_items(
             html_content, item_links, markdown=markdown
@@ -689,4 +737,3 @@ class ParsedHtml10Q(BaseHtmlParser):
                 result["extracted"][item_name.lower()] = content
 
         return result
-

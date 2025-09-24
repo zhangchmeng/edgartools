@@ -399,9 +399,9 @@ class ChunkedDocument:
         
         try:
             introduction_content = self.get_introduction(markdown=markdown)
-            result["extracted"]["introduction"] = introduction_content if introduction_content else ""
+            result["extracted"]["item 0"] = introduction_content if introduction_content else ""
         except:
-            result["extracted"]["introduction"] = ""
+            result["extracted"]["item 0"] = ""
         return result
 
     def _chunks_for(self, item_or_part: str, col: str = 'Item'):
