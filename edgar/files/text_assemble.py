@@ -170,23 +170,21 @@ class AssembleText:
         """
         if not html_content or not item_links:
             return {}
+            
+        # Parse HTML content - 使用缓存避免重复解析
+        root: Tag = HtmlDocument.get_root(html_content)
+        start_element = clean_html_root(root)
+        decompose_page_numbers(start_element)
+        soup = start_element
 
-        with time_section("parse_html"):
-            # Parse HTML content - 使用缓存避免重复解析
-            root: Tag = HtmlDocument.get_root(html_content)
-            start_element = clean_html_root(root)
-            decompose_page_numbers(start_element)
-            soup = start_element
-
-            if not soup:
-                logging.error("Failed to parse HTML content")
-                return {}
+        if not soup:
+            logging.error("Failed to parse HTML content")
+            return {}
 
         # 预先分配足够大小的结果字典
         content_by_link = {}
 
         # 预处理 item_links 为更高效的格式
-        item_part = None
         with time_section("process_item_links"):
             # 使用集合去重
             link_points = set()
@@ -399,9 +397,9 @@ class AssembleText:
                         processed_intro_elements.add(id(element))
 
                 if intro_elements:
-                    content_by_link[("extracted", "INTRO")] = intro_elements
+                    content_by_link[("extracted", "Item 0")] = intro_elements
 
-        # return content_by_link
+        # return content_by_link content_by_link['part i', 'ITEM 1']
         results = {}
         for key, value in content_by_link.items():
             results[key] = AssembleText.assemble_html_document(value)

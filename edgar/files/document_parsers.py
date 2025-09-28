@@ -1,9 +1,10 @@
 from typing import List, Dict, Optional, Any
 import logging
 from edgar.files.base_parser import BaseHtmlParser
-from edgar.files.text_assembler import AssembleText
+from edgar.files.text_assemble import AssembleText
 from edgar.files.timeout_utils import monitor_performance
-from edgar.files.extract_item_ai import extract_items_with_ai
+# from edgar.files.extract_item_ai import extract_items_with_ai
+from edgar.files.extract_item_ai_all import extract_catalog_structure
 
 class ParsedHtml10K(BaseHtmlParser):
     @staticmethod
@@ -435,7 +436,8 @@ class ParsedHtml10K(BaseHtmlParser):
         
 
         if not item_links or len(item_links) < 10:
-            new_item_links = extract_items_with_ai(structure.structure, index_table)
+            # new_item_links = extract_items_with_ai(structure.structure, index_table)
+            new_item_links = extract_catalog_structure(html_content, structure.structure)
             if new_item_links:
                 item_links = new_item_links
 
@@ -717,11 +719,13 @@ class ParsedHtml10Q(BaseHtmlParser):
                 item_links = []
 
             if not item_links or len(item_links) < 5:
-                new_item_links = extract_items_with_ai(structure.structure, index_table)
+                # new_item_links = extract_items_with_ai(structure.structure, index_table)
+                new_item_links = extract_catalog_structure(html_content, structure.structure)
                 if new_item_links:
                     item_links = new_item_links
         else:
-            item_links = extract_items_with_ai(structure.structure, index_table)
+            item_links = extract_catalog_structure(html_content, structure.structure)
+            # item_links = extract_items_with_ai(structure.structure, index_table)
 
         item_result = AssembleText.assemble_items(
             html_content, item_links, markdown=markdown

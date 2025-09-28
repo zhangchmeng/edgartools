@@ -242,6 +242,7 @@ class Block:
     def __repr__(self):
         return self.text
 
+
 class LinkBlock(Block):
     
     def __init__(self, text: str, tag:str, alt:str, src:str, **tags):
@@ -265,6 +266,7 @@ class LinkBlock(Block):
 
     def __repr__(self):
         return self.text
+
 
 class TextBlock(Block):
 
@@ -379,8 +381,7 @@ class HtmlDocument:
         compressed_blocks = []
         current_block = None
         for i, block in enumerate(blocks):
-            # if block.get_text().strip().startswith('PART I'):
-            #     import pdb;pdb.set_trace()
+
             if isinstance(block, TableBlock):
                 if current_block:
                     compressed_blocks.append(current_block)
@@ -448,6 +449,7 @@ class HtmlDocument:
         if len(header_elements) == 0:
             return None
         ixbrl_document: DocumentData = DocumentData.parse_headers(header_elements)
+        
         for header_element in header_elements:
             header_element.decompose()
         ixbrl_document.parse_inline_data(start_element.body)
@@ -520,8 +522,7 @@ class HtmlDocument:
                 # Check if the block is an "Item" header
                 is_item_header = bool(re.match(item_pattern, block.text))
                 is_part_header = bool(part_pattern.match(block.text))
-                # if "PART I" in block.text.upper():
-                #     import pdb;pdb.set_trace()
+                
                 if is_part_header:
                      # Yield the current chunk before starting a new one with the "Part" header
                     if current_chunk:
@@ -610,7 +611,7 @@ def extract_and_format_content(element) -> List[Block]:
         inline = is_inline(element)
         blocks: List[Block] = []
         len_children = len(element.contents)
-
+                
         for index, child in enumerate(element.children):
             if child.name:
                 blocks.extend(extract_and_format_content(child))
@@ -624,6 +625,7 @@ def extract_and_format_content(element) -> List[Block]:
             else:
                 stripped_string = replace_inline_newlines(child.string)
                 stripped_string = fixup(stripped_string)
+                
                 if not stripped_string.strip() and len(blocks) > 0 and not blocks[-1].get_text().strip():
                     if not blocks[-1].get_text().endswith('\n'):  # Don't add a space after a new line
                         blocks[-1].text += stripped_string
@@ -734,44 +736,93 @@ def merge_empty_div_elements(start_element: Tag):
     return start_element
 
 def decompose_page_numbers(start_element: Tag):
+    """Identify and remove consecutive page number tags, considering number sequence and format similarity"""
     span_tags_with_numbers = start_element.find_all('span', string=re.compile(r'^\d{1,3}$'))
-    sequences = []  # To store the sequences of tags for potential review
-    current_sequence = []
-    previous_number = None
+    
+    def get_tag_style_signature(tag):
+        """Extract tag style features for comparison"""
+        style = tag.get('style', '')
+        class_attr = ' '.join(tag.get('class', []))
+        parent_tag = tag.parent.name if tag.parent else ''
+        parent_class = ' '.join(tag.parent.get('class', [])) if tag.parent and hasattr(tag.parent, 'get') else ''
+        
+        # Extract key style properties
+        font_family = ''
+        font_size = ''
+        font_weight = ''
+        color = ''
+        
+        if style:
+            font_family_match = re.search(r'font-family:([^;]+)', style)
+            font_size_match = re.search(r'font-size:([^;]+)', style)
+            font_weight_match = re.search(r'font-weight:([^;]+)', style)
+            color_match = re.search(r'color:([^;]+)', style)
+            
+            if font_family_match:
+                font_family = font_family_match.group(1).strip().replace("'", "").replace('"', '')
+            if font_size_match:
+                font_size = font_size_match.group(1).strip()
+            if font_weight_match:
+                font_weight = font_weight_match.group(1).strip()
+            if color_match:
+                color = color_match.group(1).strip()
+        
+        # Create style signature
+        signature = f"{font_family}|{font_size}|{font_weight}|{color}|{class_attr}|{parent_tag}|{parent_class}"
+        return signature
 
+    def styles_match(signature1, signature2):
+        """Check if two style signatures match"""
+        if not signature1 or not signature2:
+            return False
+        return signature1 == signature2
+
+    def is_truly_consecutive(numbers):
+        """Check if numbers are truly consecutive"""
+        if len(numbers) < 10:
+            return False
+        numbers.sort()
+        for i in range(1, len(numbers)):
+            if numbers[i] != numbers[i-1] + 1:
+                return False
+        return True
+
+    # Group tags by style signature
+    style_groups = {}
     for tag in span_tags_with_numbers:
-        '''
-        some page link need keep
-        <span style="color:#000000;font-family:'Helvetica',sans-serif;font-size:9pt;font-weight:400;line-height:100%">
-        <a href="#i7bfbfbe54b9647b1b4ba4ff4e0aba09d_73" style="color:#000000;font-family:'Helvetica',sans-serif;font-size:9pt;font-weight:400;line-height:100%;text-decoration:none">
-        17</a></span>
-        '''
+        # Skip tags containing links (preserve page navigation links)
         if tag.find("a"):
             continue
         if not tag.text:
             continue
+            
         number = int(tag.text)
-        # Check if the number is sequentially next
-        if previous_number is None or number == previous_number + 1:
-            current_sequence.append(tag)
-        else:
-            # If a sequence is broken and the current sequence has more than one element, it's considered valid
-            if len(current_sequence) > 1:
-                sequences.append(current_sequence)
-                # Decompose all tags in the current valid sequence
-                for seq_tag in current_sequence:
-                    seq_tag.decompose()
-            # Start a new sequence
-            current_sequence = [tag]
-        previous_number = number
+        tag_style_signature = get_tag_style_signature(tag)
+        
+        if tag_style_signature not in style_groups:
+            style_groups[tag_style_signature] = []
+        style_groups[tag_style_signature].append((tag, number))
 
-    # Check the last sequence
-    if len(current_sequence) > 1:
-        sequences.append(current_sequence)
-        for seq_tag in current_sequence:
-            seq_tag.decompose()
-
-    return sequences
+    # Analyze each style group to determine if it represents page numbers
+    sequences_to_remove = []
+    
+    for signature, tag_number_pairs in style_groups.items():
+        if len(tag_number_pairs) < 2:
+            continue  # Skip single tags
+            
+        # Extract numbers and check if they form consecutive sequences
+        numbers = [pair[1] for pair in tag_number_pairs]
+        
+        # Check if this group contains consecutive page numbers
+        if is_truly_consecutive(numbers):
+            # This group appears to be page numbers, mark for removal
+            tags_to_remove = [pair[0] for pair in tag_number_pairs]
+            sequences_to_remove.extend(tags_to_remove)
+ 
+    # Remove identified page number tags
+    for tag in sequences_to_remove:
+        tag.decompose()
+    return sequences_to_remove
 
 
 def get_text_between_tags(html: str, tag: str, ):
@@ -801,13 +852,25 @@ def is_inline(tag):
     # is is navigable string return False
     if not tag.name:
         return False
+    
     # Common inline elements
     inline_elements = {'a', 'span', 'strong', 'em', 'b', 'i', 'u', 'small', 'font', 'big', 'sub', 'sup', 'img', 'label',
-                       'input', 'button'}
+                       'input', 'button', 'textarea', 'select', 'option', 'code', 'cite', 'abbr', 'acronym', 'tt', 'var',
+                       'kbd', 'samp', 'dfn', 'time', 'mark', 'data'}
+
+    # Common block elements
+    block_elements = {'div', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'dl', 'dt', 'dd', 'table', 
+                      'tr', 'td', 'th', 'thead', 'tbody', 'tfoot', 'caption', 'blockquote', 'pre', 'address', 'fieldset',
+                      'form', 'hr', 'article', 'aside', 'details', 'figcaption', 'figure', 'footer', 'header', 'main',
+                      'nav', 'section', 'summary'}
 
     # Check if the tag's name is in the list of inline elements
     if tag.name in inline_elements:
         return True
+
+    # Check if the tag's name is in the list of block elements
+    if tag.name in block_elements:
+        return False
 
     # #ixbrl tags are inline
     if tag.name.startswith("ix:"):
@@ -821,9 +884,14 @@ def is_inline(tag):
                 property_value = style.split(':')
                 if len(property_value) > 1:
                     display_value = property_value[1].strip().lower()
-                    if display_value in ['inline', 'inline-block']:
+                    # Handle various display values
+                    if display_value in ['inline', 'inline-block', 'inline-flex', 'inline-grid']:
                         return True
-    return False
+                    elif display_value in ['block', 'flex', 'grid', 'table', 'table-row', 'table-cell']:
+                        return False
+
+    # If we can't determine from the above checks, fall back to default behavior
+    return tag.name in inline_elements
 
 
 def fixup(text: str):
@@ -854,6 +922,8 @@ def get_clean_html(html: str) -> Optional[str]:
 def clean_html_root(root: Tag) -> Tag:
     """Clean the root element by removing header tags, script and style tags, and table of content links."""
     # Remove the header tags
+    # specific_tag = root.find('ix:nonfraction', attrs={'unitref': 'shares', 'contextref': 'c-5','name': 'us-gaap:WeightedAverageNumberOfDilutedSharesOutstanding'})
+    
     for tag in root.find_all('ix:header'):
         tag.decompose()
 

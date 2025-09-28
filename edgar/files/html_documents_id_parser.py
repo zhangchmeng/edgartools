@@ -10,7 +10,7 @@ except ImportError:
 
 # Import refactored modules
 from edgar.files.timeout_utils import TimeoutException, monitor_performance
-from edgar.files.text_assembler import AssembleText
+from edgar.files.text_assemble import AssembleText
 from edgar.files.base_parser import BaseHtmlParser
 from edgar.files.document_parsers import ParsedHtml10K, ParsedHtml10Q
 

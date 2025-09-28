@@ -281,6 +281,7 @@ def chunks2df(chunks: List[List[Block]],
                                      Item=lambda df: item_detector(df.Text)
                                      )
 
+    # import pdb;pdb.set_trace()
     # chunk_df[(chunk_df.Item.notnull())|(chunk_df.Part.notnull())]
     # If the row is 'toc' then set the item and part to empty
     chunk_df.loc[chunk_df.Item.str.contains('\n', na=False), 'Item'] = np.nan
@@ -312,7 +313,6 @@ def chunks2df(chunks: List[List[Block]],
 
     # Finalize the colums
     chunk_df = chunk_df[['Text', 'Table', 'Chars', 'Signature', 'TocLink', 'Toc', 'Empty', 'Part', 'Item']]
-
     return chunk_df
 
 
@@ -435,40 +435,8 @@ class ChunkedDocument:
         empty_mask = ~chunk_df.Empty
         mask = part_mask & item_mask & toc_mask & empty_mask
 
-        # Process to keep only consecutive indices, discard non-consecutive head/tail indices with warning
-        index_list = mask[mask].index.to_list()
-        if not index_list:
-            return
-        
-        continuous_segments = []
-        current_segment = [index_list[0]]
-        
-        for i in range(1, len(index_list)):
-            if index_list[i] <= current_segment[-1] + 5:
-                current_segment.append(index_list[i])
-            else:
-                continuous_segments.append(current_segment)
-                current_segment = [index_list[i]]
-        
-        continuous_segments.append(current_segment)
-        
-        # retain only the longest continuous segment
-        longest_segment = max(continuous_segments, key=len)
-        
-        # warning dity content
-        if len(continuous_segments) > 1:
-            discarded_indices = []
-            for segment in continuous_segments:
-                if segment != longest_segment:
-                    discarded_indices.extend(segment)
-            warnings.warn(
-                f"Discarded non-continuous indices: {discarded_indices}. "
-                f"""content: {''.join([
-                        ''.join(block.get_text() for block in self.chunks[idx])
-                        for idx in discarded_indices
-                    ])}"""
-            )
-        for i in longest_segment:
+        # Return all matching chunks without filtering for continuity
+        for i in mask[mask].index:
             yield self.chunks[i]
 
     def chunks_for_item(self, item: str):
