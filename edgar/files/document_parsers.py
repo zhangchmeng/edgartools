@@ -423,7 +423,7 @@ class ParsedHtml10K(BaseHtmlParser):
         return result
 
     def extract_html(
-        self, html_content: str, structure, markdown: bool = False
+        self, html_content: str, structure, markdown: bool = False, form_type: str = "10-K"
     ) -> Dict[str, Any]:
         """
         Find rows in tables that:
@@ -435,9 +435,9 @@ class ParsedHtml10K(BaseHtmlParser):
         item_links = self.classify_items_to_parts(raw_item_links, structure)
         
 
-        if not item_links or len(item_links) < 10:
+        if not item_links or (len(item_links) < 10 and form_type == "10-K"):
             # new_item_links = extract_items_with_ai(structure.structure, index_table)
-            new_item_links = extract_catalog_structure(html_content, structure.structure)
+            new_item_links = extract_catalog_structure(html_content, structure.structure, form_type)
             if new_item_links:
                 item_links = new_item_links
 
@@ -706,7 +706,7 @@ class ParsedHtml10Q(BaseHtmlParser):
 
 
     def extract_html(
-        self, html_content: str, structure, markdown: bool = True
+        self, html_content: str, structure, markdown: bool = True, form_type: str = "10-Q"
     ) -> Dict[str, Any]:
         """Extract 10-Q items from HTML content, handling same item numbers in different parts."""
         index_table = self.extract_html_link_info(html_content)
@@ -718,13 +718,13 @@ class ParsedHtml10Q(BaseHtmlParser):
             elif not isinstance(item_links, list):
                 item_links = []
 
-            if not item_links or len(item_links) < 5:
+            if not item_links or (len(item_links) < 5 and form_type == "10-Q"):
                 # new_item_links = extract_items_with_ai(structure.structure, index_table)
-                new_item_links = extract_catalog_structure(html_content, structure.structure)
+                new_item_links = extract_catalog_structure(html_content, structure.structure, form_type)
                 if new_item_links:
                     item_links = new_item_links
         else:
-            item_links = extract_catalog_structure(html_content, structure.structure)
+            item_links = extract_catalog_structure(html_content, structure.structure, form_type)
             # item_links = extract_items_with_ai(structure.structure, index_table)
 
         item_result = AssembleText.assemble_items(

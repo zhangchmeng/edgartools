@@ -12,59 +12,59 @@ from bs4 import BeautifulSoup, Comment
 
 class HTMLClean:
     """
-    HTML清理器类
+    HTML Cleaner Class
 
-    专门用于处理SEC文档的HTML内容，提取和格式化目录信息
+    Specialized for processing HTML content of SEC documents, extracting and formatting table of contents information
     """
 
     def __init__(self):
-        """初始化HTML清理器"""
+        """Initialize HTML cleaner"""
         pass
 
     def clean_html(self, html) -> str:
         """
-        清理HTML，保留结构但去除无意义样式，输出适合GPT读取的HTML格式
+        Clean HTML, preserve structure but remove meaningless styles, output HTML format suitable for GPT reading
 
         Args:
-            html: HTML字符串或BeautifulSoup对象
+            html: HTML string or BeautifulSoup object
 
         Returns:
-            str: 清理后的HTML字符串
+            str: Cleaned HTML string
         """
         try:
-            # 解析HTML - 如果传入的是字符串，需要先解析
+            # Parse HTML - if input is a string, parse it first
             if isinstance(html, str):
                 soup = BeautifulSoup(html, "html.parser")
             else:
                 soup = html
 
-            # 移除不需要的标签和内容
+            # Remove unwanted tags and content
             self._remove_unwanted_elements(soup)
 
-            # 保留重要元素
+            # Preserve important elements
             self._preserve_important_elements(soup)
 
-            # 清理样式属性
+            # Clean styling attributes
             self._clean_styling_attributes(soup)
 
-            # 简化HTML结构
+            # Simplify HTML structure
             self._simplify_html_structure(soup)
 
-            # 返回清理后的HTML字符串
+            # Return cleaned HTML string
             return str(soup)
 
         except Exception as e:
-            # 如果解析失败，返回原始内容
+            # If parsing fails, return original content
             return str(html)
 
     def _remove_unwanted_elements(self, soup):
         """
-        移除不需要的HTML元素，但保留基本结构
+        Remove unwanted HTML elements while preserving basic structure
 
         Args:
-            soup: BeautifulSoup对象
+            soup: BeautifulSoup object
         """
-        # 移除脚本、样式、注释等不需要的元素
+        # Remove scripts, styles, comments and other unwanted elements
         unwanted_tags = [
             "script",
             "style",
@@ -81,19 +81,19 @@ class HTMLClean:
             for element in soup.find_all(tag):
                 element.decompose()
 
-        # 移除HTML注释
+        # Remove HTML comments
         for comment in soup.find_all(
             string=lambda text: isinstance(text, Comment)
         ):
             comment.extract()
 
-        # 移除具有display:none的元素
+        # Remove elements with display:none
         for element in soup.find_all(style=True):
             style = element.get("style", "")
             if "display:none" in style or "visibility:hidden" in style:
                 element.decompose()
 
-        # 移除完全空的元素（但保留有属性的元素）
+        # Remove completely empty elements (but preserve elements with attributes)
         for element in soup.find_all():
             if (
                 not element.get_text(strip=True)
@@ -104,45 +104,45 @@ class HTMLClean:
 
     def _clean_styling_attributes(self, soup):
         """
-        清理样式属性，保留必要的结构信息
+        Clean styling attributes, preserve necessary structural information
 
         Args:
-            soup: BeautifulSoup对象
+            soup: BeautifulSoup object
         """
-        # 需要完全移除的样式属性
+        # Style attributes to be completely removed
         style_attrs_to_remove = ["style", "class", "id"]
 
-        # 需要保留的重要属性
+        # Important attributes to preserve
         important_attrs = ["href", "src", "alt", "title", "colspan", "rowspan"]
 
         for element in soup.find_all():
-            # 获取当前元素的所有属性
+            # Get all attributes of current element
             attrs_to_keep = {}
 
-            # 保留重要属性
+            # Preserve important attributes
             for attr in important_attrs:
                 if attr in element.attrs:
                     attrs_to_keep[attr] = element.attrs[attr]
 
-            # 清空所有属性，然后只保留重要的
+            # Clear all attributes, then keep only important ones
             element.attrs.clear()
             element.attrs.update(attrs_to_keep)
 
     def _simplify_html_structure(self, soup):
         """
-        简化HTML结构，合并不必要的嵌套
+        Simplify HTML structure, merge unnecessary nesting
 
         Args:
-            soup: BeautifulSoup对象
+            soup: BeautifulSoup object
         """
-        # 移除多余的空白文本节点
+        # Remove redundant whitespace text nodes
         for element in soup.find_all(text=True):
             if element.strip() == "":
                 element.extract()
 
-        # 简化嵌套的div结构
+        # Simplify nested div structures
         for div in soup.find_all("div"):
-            # 如果div只包含一个子元素且没有重要属性，考虑展开
+            # If div contains only one child element and has no important attributes, consider expanding
             children = [
                 child
                 for child in div.children
@@ -154,30 +154,30 @@ class HTMLClean:
                 and children[0].name in ["div", "span"]
                 and not div.attrs
             ):
-                # 将子元素的内容提升到父级
+                # Promote child element content to parent level
                 child = children[0]
                 div.replace_with(child)
 
     def _preserve_important_elements(self, soup):
         """
-        确保重要的HTML结构元素得到保留
+        Ensure important HTML structural elements are preserved
 
         Args:
-            soup: BeautifulSoup对象
+            soup: BeautifulSoup object
         """
-        # 保留表格结构
+        # Preserve table structure
         for table in soup.find_all("table"):
-            # 确保表格的基本结构属性得到保留
+            # Ensure basic structural attributes of tables are preserved
             if "colspan" in str(table) or "rowspan" in str(table):
                 continue
 
-        # 保留链接的href属性
+        # Preserve href attributes of links
         for link in soup.find_all("a"):
             if not link.get("href"):
-                # 如果链接没有href属性，可能需要从其他地方获取
+                # If link has no href attribute, might need to get it from elsewhere
                 continue
 
-        # 保留有意义的文本内容
+        # Preserve meaningful text content
         for element in soup.find_all(text=True):
             if element.strip():
                 continue
@@ -199,6 +199,7 @@ out_parser = PydanticOutputParser(output_cls=LinkResult)
 def extract_items_with_ai(
     standard_modules: Dict[str, Any],
     document_toc: Dict[str, Any],
+    form_type: str = "10-Q",
 ) -> List[Tuple[Tuple[str, str], str]]:
     """
     Use OpenAI API to classify document table of contents according to standard modules
@@ -237,7 +238,7 @@ def extract_items_with_ai(
 
     # Construct prompt
     prompt = f"""
-    You are a professional SEC report analyst. Your task is to classify document table of contents items into corresponding Parts and Items according to the EXACT standard structure provided.
+    You are a professional SEC report analyst. Your task is to classify document table of contents items into corresponding Parts and Items according to the EXACT {form_type} standard structure provided.
     
     Standard module structure:
     '''
@@ -355,7 +356,7 @@ def extract_items_with_ai(
         ],
         temperature=0.1,
     )
-
+    import pdb;pdb.set_trace()
     # Parse response
     result_text = response.choices[0].message.content
     if not result_text:
@@ -383,18 +384,24 @@ def extract_items_with_ai(
 
 
 class HTMLCatalogExtractor:
-    """HTML目录提取器"""
+    """
+    HTML catalog extractor, used to extract table of contents from HTML documents
+    """
 
     def __init__(self, content: str):
         """
-        初始化HTML目录提取器
+        Initialize HTML catalog extractor
 
         """
         self.soup = None
         self.load_html(content)
 
     def load_html(self, content: str):
-        """加载HTML文件"""
+        """Load HTML content
+        
+        Args:
+            content: HTML content string
+        """
         try:
             if isinstance(content, str):
                 self.soup = BeautifulSoup(content, "html.parser")
@@ -463,23 +470,23 @@ class HTMLCatalogExtractor:
 
     def _is_element_contained_in(self, child_element, parent_element) -> bool:
         """
-        检查一个元素是否被另一个元素包含
+        Check if one element is contained within another element
 
         Args:
-            child_element: 可能被包含的子元素
-            parent_element: 可能包含子元素的父元素
+            child_element: The element that might be contained
+            parent_element: The element that might contain the child
 
         Returns:
-            如果child_element被parent_element包含则返回True，否则返回False
+            True if child_element is contained within parent_element, False otherwise
         """
         if not child_element or not parent_element:
             return False
 
-        # 如果两个元素相同，不认为是包含关系
+        # If two elements are the same, consider it as contained
         if child_element == parent_element:
             return True
 
-        # 检查child_element是否是parent_element的后代
+        # Check if child_element is a descendant of parent_element
         current = child_element.parent
         while current:
             if current == parent_element:
@@ -572,63 +579,67 @@ class HTMLCatalogExtractor:
 
     def _is_complete_element(self, element) -> bool:
         """
-        判断元素是否为完整的元素（用于标签完整闭合判断）
+        Check if element is complete (has both start and end tags)
 
         Args:
-            element: 要检查的元素
+            element: Element to check
 
         Returns:
-            是否为完整元素
+            bool: True if element is complete
         """
-        if not element or not hasattr(element, "name"):
+        # Check if element has proper structure
+        if not hasattr(element, "name") or not element.name:
             return False
 
-        # 检查是否为重要的块级元素
-        important_tags = ["table", "div", "section", "article", "ul", "ol"]
-        return element.name in important_tags
+        # Self-closing tags are considered complete
+        if element.name in ["br", "hr", "img", "input", "meta", "link"]:
+            return True
+
+        # Check if element has content or children
+        return bool(element.get_text(strip=True) or element.find_all())
 
     def _analyze_range_as_toc(self, elements_in_range) -> List[BeautifulSoup]:
         """
-        分析整个范围内的元素，判断是否包含目录结构
-        基于实际HTML结构特征进行优化识别
+        Analyze a range of elements as potential table of contents
+        Based on actual HTML structure features for optimized identification
 
         Args:
-            elements_in_range: 范围内的所有元素列表
+            elements_in_range: List of all elements in the range
 
         Returns:
-            找到的目录容器列表
+            List of found table of contents containers
         """
         toc_containers = []
 
-        # 1. 优先查找包含表格的目录结构
+        # 1. Priority search for table-based table of contents structure
         table_containers = self._find_toc_tables_in_range(elements_in_range)
         if table_containers:
             toc_containers.extend(table_containers)
             return toc_containers
 
-        # 2. 查找包含大量链接的div容器
+        # 2. Search for div containers with many links
         div_containers = self._find_toc_divs_in_range(elements_in_range)
         if div_containers:
             toc_containers.extend(div_containers)
             return toc_containers
 
-        # 3. 统计整个范围内的内部链接数量作为后备方案
+        # 3. Count internal links in entire range as fallback
         total_internal_links = 0
         link_elements = []
 
         for element in elements_in_range:
-            # 查找所有链接
+            # Find all links
             links = element.find_all("a", href=True)
             for link in links:
                 href = link.get("href", "")
-                # 检查是否为内部链接（以#开头）
+                # Check if it's an internal link (starts with #)
                 if href.startswith("#"):
                     total_internal_links += 1
                     link_elements.append(link)
 
-        # 如果整个范围内有足够的内部链接（≥5），认为可能是目录
+        # If there are enough internal links (≥5) in the entire range, consider it as potential TOC
         if total_internal_links >= 5:
-            # 按照元素包含的链接数量排序，优先返回链接最多的元素
+            # Sort elements by number of links they contain, prioritize elements with most links
             element_link_counts = []
             for element in elements_in_range:
                 element_links = element.find_all(
@@ -636,12 +647,12 @@ class HTMLCatalogExtractor:
                 )
                 element_link_counts.append((element, len(element_links)))
 
-            # 按链接数量降序排序
+            # Sort by link count in descending order
             element_link_counts.sort(key=lambda x: x[1], reverse=True)
 
-            # 返回链接数量最多的前几个元素
+            # Return elements with most links
             for element, link_count in element_link_counts:
-                if link_count >= 3:  # 至少包含3个内部链接的元素
+                if link_count >= 3:  # Elements with at least 3 internal links
                     toc_containers.append(element)
 
         return toc_containers
@@ -710,27 +721,27 @@ class HTMLCatalogExtractor:
 
     def _is_toc_table_structure(self, table) -> bool:
         """
-        检查表格是否具有目录结构特征
+        Check if table has table of contents structure
 
         Args:
-            table: 表格元素
+            table: Table element to check
 
         Returns:
-            是否为目录表格
+            bool: True if table has TOC structure
         """
-        # 1. 检查表格内部链接数量
+        # 1. Check internal link count in table
         internal_links = table.find_all(
             "a", href=lambda x: x and x.startswith("#")
         )
         if len(internal_links) < 3:
             return False
 
-        # 2. 检查表格行数（目录表格通常有多行）
+        # 2. Check table row count (TOC tables usually have multiple rows)
         rows = table.find_all("tr")
         if len(rows) < 3:
             return False
 
-        # 3. 检查是否包含典型的目录关键词
+        # 3. Check for typical TOC keywords
         table_text = table.get_text().lower()
         toc_keywords = [
             "item",
@@ -745,38 +756,38 @@ class HTMLCatalogExtractor:
             1 for keyword in toc_keywords if keyword in table_text
         )
 
-        # 4. 检查链接密度（链接数量与行数的比例）
+        # 4. Check link density (ratio of links to rows)
         link_density = len(internal_links) / len(rows)
 
-        # 综合判断：链接数量足够 + 关键词匹配 + 合理的链接密度
+        # Comprehensive judgment: sufficient links + keyword matching + reasonable link density
         return keyword_count >= 2 and link_density >= 0.5
 
     def _is_toc_div_structure(self, div) -> bool:
         """
-        检查div是否具有目录结构特征
+        Check if div has table of contents structure
 
         Args:
-            div: div元素
+            div: Div element to check
 
         Returns:
-            是否为目录div
+            bool: True if div has TOC structure
         """
-        # 1. 检查div内部链接数量
+        # 1. Check internal link count in div
         internal_links = div.find_all(
             "a", href=lambda x: x and x.startswith("#")
         )
         if len(internal_links) < 5:
             return False
 
-        # 2. 检查是否包含嵌套的表格结构
+        # 2. Check for nested table structures
         nested_tables = div.find_all("table")
         if nested_tables:
-            # 如果包含表格，检查表格是否符合目录特征
+            # If contains tables, check if tables have TOC characteristics
             for table in nested_tables:
                 if self._is_toc_table_structure(table):
                     return True
 
-        # 3. 检查div的文本内容是否包含目录特征
+        # 3. Check if div text content has TOC characteristics
         div_text = div.get_text().lower()
         toc_keywords = [
             "table of contents",
@@ -790,30 +801,30 @@ class HTMLCatalogExtractor:
             1 for keyword in toc_keywords if keyword in div_text
         )
 
-        # 4. 检查链接文本是否包含页码引用
+        # 4. Check if link text contains page references
         page_references = 0
         for link in internal_links:
             link_text = link.get_text().strip()
-            # 检查是否为数字（页码）
+            # Check if it's a number (page number)
             if link_text.isdigit():
                 page_references += 1
 
-        # 综合判断：大量内部链接 + 关键词匹配 + 页码引用
+        # Comprehensive judgment: many internal links + keyword matching + page references
         return keyword_matches >= 1 and page_references >= 2
 
     def extract_catalog_tables(self) -> List[Dict[str, Any]]:
         """
-        提取包含目录信息的表格，在整个文档中搜索
+        Extract tables containing catalog information, search throughout the document
 
         Returns:
-            表格信息列表
+            List of table information
         """
         catalog_tables = []
 
         if not self.soup:
             return catalog_tables
 
-        # 获取所有表格，包括文档各个位置的表格
+        # Get all tables, including tables from various positions in the document
         tables = self.soup.find_all("table")
 
         for i, table in enumerate(tables):
@@ -822,20 +833,19 @@ class HTMLCatalogExtractor:
                 [a for a in a_list if a.get("href", "").startswith("#")]
             )
 
-            # 如果表格包含超过两个有效的内部链接，认为是目录表格
+            # If table contains more than two valid internal links, consider it as catalog table
             if internal_link_count > 1:
                 catalog_tables.append(table)
 
         return catalog_tables
-
     def get_catalog_structure(self) -> Dict[str, Any]:
         """
-        获取完整的目录结构，包括TABLE OF CONTENTS容器和目录表格
+        Get complete catalog structure, including TABLE OF CONTENTS containers and catalog tables
 
         Returns:
-            包含toc_containers和catalog_tables的字典
+            Dictionary containing toc_containers and catalog_tables
         """
-        # 查找所有TABLE OF CONTENTS容器
+        # Find all TABLE OF CONTENTS containers
         table_containers = self.extract_catalog_tables()
         if table_containers:
             return table_containers
@@ -846,33 +856,33 @@ class HTMLCatalogExtractor:
 
     def get_catalog_link_position(self, catalogs=None) -> Dict[str, int]:
         """
-        获取每个href="#xxx"链接目标在HTML文本中的位置
+        Get the position of each href="#xxx" link target in HTML text
 
         Args:
-            catalogs: 目录结构列表，如果提供则仅处理这些目录中的链接
+            catalogs: List of catalog structures, if provided only process links in these catalogs
 
         Returns:
-            字典，键为链接的href值，值为该链接目标元素在HTML文本中的字符位置
+            Dictionary with link href as key and target element character position in HTML text as value
         """
         if not self.soup:
             return {}
 
-        # 获取原始HTML文本
+        # Get original HTML text
         html_text = str(self.soup)
         link_positions = {}
 
         if catalogs is not None:
-            # 仅处理catalogs中的链接
+            # Only process links in catalogs
             catalog_links = set()
 
             for catalog in catalogs:
-                # 将catalog转换为BeautifulSoup对象（如果还不是的话）
+                # Convert catalog to BeautifulSoup object (if not already)
                 if isinstance(catalog, str):
                     catalog_soup = BeautifulSoup(catalog, "html.parser")
                 else:
                     catalog_soup = catalog
 
-                # 查找catalog中的所有内部链接
+                # Find all internal links in catalog
                 internal_links = catalog_soup.find_all(
                     "a", href=lambda x: x and x.startswith("#")
                 )
@@ -882,24 +892,24 @@ class HTMLCatalogExtractor:
                     if href and href.startswith("#"):
                         catalog_links.add(href)
 
-            # 只处理catalog中出现的链接
+            # Only process links that appear in catalog
             for href in catalog_links:
-                # 提取目标ID（去掉#号）
-                target_id = href[1:]  # 去掉开头的#
+                # Extract target ID (remove # prefix)
+                target_id = href[1:]  # Remove leading #
 
-                # 查找目标元素（通过id属性）
+                # Find target element (by id attribute)
                 target_element = self.soup.find(attrs={"id": target_id})
 
                 if target_element:
-                    # 获取目标元素的字符串表示
+                    # Get string representation of target element
                     target_str = str(target_element)
 
-                    # 在HTML文本中查找目标元素的位置
+                    # Find position of target element in HTML text
                     position = html_text.find(target_str)
                     if position != -1:
                         link_positions[href] = position
         else:
-            # 原有逻辑：查找所有内部链接
+            # Original logic: find all internal links
             internal_links = self.soup.find_all(
                 "a", href=lambda x: x and x.startswith("#")
             )
@@ -907,20 +917,20 @@ class HTMLCatalogExtractor:
             for link in internal_links:
                 href = link.get("href")
                 if href and href.startswith("#"):
-                    # 提取目标ID（去掉#号）
-                    target_id = href[1:]  # 去掉开头的#
+                    # Extract target ID (remove # prefix)
+                    target_id = href[1:]  # Remove leading #
 
-                    # 查找目标元素（通过id属性）
+                    # Find target element (by id attribute)
                     target_element = self.soup.find(attrs={"id": target_id})
 
                     if target_element:
-                        # 获取目标元素的字符串表示
+                        # Get string representation of target element
                         target_str = str(target_element)
 
-                        # 在HTML文本中查找目标元素的位置
+                        # Find position of target element in HTML text
                         position = html_text.find(target_str)
                         if position != -1:
-                            # 如果同一个href有多个链接，保存第一个找到的目标位置
+                            # If same href has multiple links, save position of first target found
                             if href not in link_positions:
                                 link_positions[href] = position
 
@@ -928,25 +938,26 @@ class HTMLCatalogExtractor:
 
     def get_catalog_structure_from_html(self) -> Dict[str, Any]:
         """
-        获取完整的目录结构和链接位置信息
+        Get complete catalog structure and link position information
 
         Returns:
-            包含目录结构和链接位置的字典
+            Dictionary containing catalog structure and link positions
         """
         catalogs = self.get_catalog_structure()
-        # 给出每个href="#xxx"的链接在文本的position，仅处理catalogs中的链接
+        # Get position for each href="#xxx" link in text, only process links in catalogs
         return {
             "table of contents": [
                 HTMLClean().clean_html(catalog) for catalog in catalogs
-            ],  # 清理后的目录HTML内容
+            ],  # Cleaned catalog HTML content
             "link content positions": self.get_catalog_link_position(
                 catalogs
-            ),  # 目录链接对应的正文位置映射
+            ),  # Mapping of catalog links to content positions
         }
 
-
-def extract_catalog_structure(html_content: str, standard_modules: Dict[str, Any]):
+def extract_catalog_structure(html_content: str, standard_modules: Dict[str, Any], form_type: str = "10-Q"):
     extractor = HTMLCatalogExtractor(html_content)
     result = extractor.get_catalog_structure_from_html()
-    ai_result = extract_items_with_ai(standard_modules, result)
+    ai_result = extract_items_with_ai(standard_modules, result, form_type)
     return ai_result
+
+

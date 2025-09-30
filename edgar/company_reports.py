@@ -282,7 +282,7 @@ class TenK(CompanyReport):
     @lru_cache(maxsize=1)
     def id_parse_document(self, markdown:bool=False):
         from edgar.files.html_documents_id_parser import ParsedHtml10K
-        return ParsedHtml10K().extract_html(self._filing.html(), self.structure, markdown=markdown)
+        return ParsedHtml10K().extract_html(self._filing.html(), self.structure, markdown=markdown, form_type=self._filing.form)
     
     def get_re_parse_res(self, markdown:bool=True):
         return self.chunked_document.part_item_res(markdown=markdown)
@@ -486,7 +486,7 @@ class TenQ(CompanyReport):
     @lru_cache(maxsize=1)
     def id_parse_document(self, markdown:bool=True):
         from edgar.files.html_documents_id_parser import ParsedHtml10Q
-        return ParsedHtml10Q().extract_html(self._filing.html(), self.structure, markdown=markdown)
+        return ParsedHtml10Q().extract_html(self._filing.html(), self.structure, markdown=markdown, form_type=self._filing.form)
 
     def get_re_parse_res(self, markdown:bool=True):
         return self.chunked_document.part_item_res(markdown=markdown)
