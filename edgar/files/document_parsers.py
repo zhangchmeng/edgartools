@@ -710,7 +710,6 @@ class ParsedHtml10Q(BaseHtmlParser):
     ) -> Dict[str, Any]:
         """Extract 10-Q items from HTML content, handling same item numbers in different parts."""
         index_table = self.extract_html_link_info(html_content)
-
         if self.check_10q_index_table(index_table):
             item_links = self.extract_item_and_split(index_table)
             if isinstance(item_links, dict):

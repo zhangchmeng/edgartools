@@ -482,9 +482,6 @@ if __name__ == "__main__":
         # 执行性能测试
         result = AssembleText.assemble_items(html_content, item_links)
         print(f"处理完成，共生成 {len(result)} 个项目")
-        import pdb
-
-        pdb.set_trace()
 
         # result[('extracted', ('extracted', 'Executive Summary'))]
         for key, value in result.items():

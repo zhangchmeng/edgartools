@@ -55,9 +55,11 @@ def read_content(source: Union[str, Path]) -> Iterator[str]:
     if isinstance(source, str) and (source.startswith('http://') or source.startswith('https://')):
         # Handle URL using stream_with_retry
         for response in stream_with_retry(source):
-            # Process each line from the response and decode from bytes
             for line in response.iter_lines():
-                if line is not None:
+                if line:
+                    # Decode bytes to string if necessary
+                    if isinstance(line, bytes):
+                        line = line.decode('utf-8')
                     yield line + "\n"
     else:
         # Handle file path
@@ -217,9 +219,7 @@ class FilingSGML:
         """
         self.header:FilingHeader = header
         self._documents_by_sequence:defaultdict[str, List[SGMLDocument]] = documents
-        self._documents_by_name:Dict[str, SGMLDocument] = {
-            doc.filename: doc for doc_lst in documents.values() for doc in doc_lst
-        }
+        self._documents_by_name:Dict[str, SGMLDocument] = {doc.filename: doc for doc_lst in documents.values() for doc in doc_lst}
 
     @property
     def accession_number(self):

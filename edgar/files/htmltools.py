@@ -257,6 +257,7 @@ def _render_blocks_using_old_markdown_tables(blocks:List[Block]):
         for block in blocks
     ]).strip()
 
+
 def chunks2df(chunks: List[List[Block]],
               item_detector: Callable[[pd.Series], pd.Series] = detect_int_items,
               item_adjuster: Callable[[pd.DataFrame, Dict[str, Any]], pd.DataFrame] = adjust_detected_items,
@@ -281,7 +282,6 @@ def chunks2df(chunks: List[List[Block]],
                                      Item=lambda df: item_detector(df.Text)
                                      )
 
-    # import pdb;pdb.set_trace()
     # chunk_df[(chunk_df.Item.notnull())|(chunk_df.Part.notnull())]
     # If the row is 'toc' then set the item and part to empty
     chunk_df.loc[chunk_df.Item.str.contains('\n', na=False), 'Item'] = np.nan

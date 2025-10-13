@@ -16,9 +16,11 @@ from httpx import RequestError, Response, AsyncClient
 import orjson as json
 from stamina import retry
 from tqdm import tqdm
+from loguru import logger
 
 from edgar.core import text_extensions, get_edgar_data_directory
 from edgar.httpclient import http_client, async_http_client
+from edgar.s3 import S3FileHandler
 
 """
 This module provides functions to handle HTTP requests with retry logic, throttling, and identity management.
@@ -257,36 +259,187 @@ async def get_with_retry_async(client: AsyncClient, url, identity=None, identity
     return response
 
 
+def _stream_from_s3_cache(url, use_s3_cache: Optional[bool] = None):
+    """
+    Internal function to check and return content from S3 cache without throttling.
+    
+    Returns:
+        Generator or None: Cached content as bytes generator if found, None otherwise.
+    """
+    from .s3_utils import should_use_s3_cache, get_s3_cache_key
+    
+    # Determine if S3 cache should be used
+    use_cache = should_use_s3_cache(use_s3_cache)
+    
+    # If S3 cache is not configured or disabled, return None immediately
+    if not use_cache:
+        print(f"S3 cache disabled for URL: {url}")
+        return None
+    
+    # Try to get from S3 cache
+    try:
+        s3_handler = S3FileHandler()
+        s3_key = get_s3_cache_key(url)
+        
+        print(f"Checking S3 cache for URL: {url} -> S3 key: {s3_key}")
+        
+        # Check if file exists in S3
+        if s3_handler.file_exists(s3_key):
+            print(f"✅ S3 CACHE HIT: Found cached file for URL: {url} (S3 key: {s3_key})")
+            cached_content = s3_handler.read_file_content(s3_key)
+            if cached_content is not None:
+                content_size = len(cached_content)
+                print(f"✅ S3 CACHE SUCCESS: Retrieved {content_size} bytes from cache for URL: {url}")
+                
+                # Return cached content as bytes generator
+                if isinstance(cached_content, str):
+                    cached_bytes = cached_content.encode('utf-8')
+                else:
+                    cached_bytes = cached_content
+                chunk_size = 8192
+                
+                def _generate_cached_chunks():
+                    for i in range(0, len(cached_bytes), chunk_size):
+                        yield cached_bytes[i:i + chunk_size]
+                
+                return _generate_cached_chunks()
+            else:
+                print(f"❌ S3 CACHE MISS: File exists but content is None for URL: {url}")
+        else:
+            print(f"❌ S3 CACHE MISS: No cached file found for URL: {url} (S3 key: {s3_key})")
+    except Exception as e:
+        print(f"❌ S3 CACHE ERROR: Failed to read from S3 cache for URL: {url}, error: {e}, falling back to HTTP streaming")
+    
+    # Return None if no cached content found or S3 operations failed
+    print(f"S3 cache lookup failed for URL: {url}, will use HTTP request")
+    return None
+
+
+def _cache_to_s3(content: bytes, url: str, use_s3_cache: Optional[bool] = None):
+    """
+    Internal function to cache content to S3 without throttling.
+    """
+    from .s3_utils import should_use_s3_cache, get_s3_cache_key
+    
+    use_cache = should_use_s3_cache(use_s3_cache)
+    if use_cache:
+        try:
+            s3_handler = S3FileHandler()
+            s3_key = get_s3_cache_key(url)
+            # Upload bytes content directly to S3
+            s3_handler.upload_content(content, s3_key)
+            print(f"Cached streamed file to S3: {s3_key}")
+        except Exception as e:
+            print(f"S3 cache write failed: {e}")
+
+
 @retry(on=RequestError, attempts=attempts, timeout=retry_timeout, wait_initial=wait_initial)
 @with_identity
 @throttle_requests(requests_per_second=max_requests_per_second)
-def stream_with_retry(url, identity=None, identity_callable=None, **kwargs):
+def _stream_from_http(url, identity=None, identity_callable=None, use_s3_cache: Optional[bool] = None, **kwargs):
     """
-    Sends a streaming GET request with retry functionality and identity handling.
+    Internal function to stream from HTTP with throttling applied.
+    """
+    print(f"🌐 HTTP REQUEST: Starting HTTP stream request for URL: {url}")
+    
+    # Stream from URL
+    with http_client() as client:
+        with client.stream("GET", url, **kwargs) as response:
+            print(f"🌐 HTTP RESPONSE: Received response with status {response.status_code} for URL: {url}")
+            
+            if response.status_code == 429:
+                print(f"❌ HTTP ERROR: Too many requests (429) for URL: {url}")
+                raise TooManyRequestsError(url)
+            elif is_redirect(response):
+                # Handle redirects by calling the main function recursively
+                redirect_location = response.headers["Location"]
+                print(f"🔄 HTTP REDIRECT: Redirecting from {url} to {redirect_location}")
+                
+                # Handle relative URLs by joining with the base URL
+                if redirect_location.startswith('/'):
+                    redirect_url = str(response.url.copy_with(path=redirect_location))
+                elif redirect_location.startswith('http'):
+                    redirect_url = redirect_location
+                else:
+                    # Relative path, resolve against current URL
+                    redirect_url = str(response.url.copy_with(path=response.url.path.rstrip('/') + '/' + redirect_location))
+                
+                print(f"🔄 HTTP REDIRECT: Resolved redirect URL: {redirect_url}")
+                response = _stream_from_http(redirect_url,
+                                        identity=identity,
+                                        identity_callable=identity_callable,
+                                        use_s3_cache=use_s3_cache, **kwargs)
+            else:
+                print(f"✅ HTTP SUCCESS: Successfully established stream for URL: {url}")
+                
+                # Cache content while streaming if S3 cache is enabled
+                from .s3_utils import should_use_s3_cache
+                use_cache = should_use_s3_cache(use_s3_cache)
+                
+                if use_cache:
+                    print(f"S3 caching enabled for URL: {url}")
+                    try:
+                        cached_content = b''
+                        # Stream and cache simultaneously
+                        for chunk in response.iter_bytes():
+                            cached_content += chunk
+                        
+                        # Upload to S3 cache after streaming is complete (without throttling)
+                        _cache_to_s3(cached_content, url, use_s3_cache)
+                        
+                        # Create a generator for the cached content to avoid stream consumption issue
+                        def content_generator():
+                            yield cached_content
+                        
+                        # Create a new response object with cached content
+                        from .mock_response import create_cached_response
+                        cached_response = create_cached_response(content_generator(), url)
+                        yield cached_response
+                    except Exception as e:
+                        print(f"❌ S3 CACHE ERROR: S3 cache streaming failed for URL: {url}, error: {e}, continuing without caching")
+                        # Fall back to normal streaming without caching
+                        yield response
+                else:
+                    print(f"S3 caching disabled for URL: {url}")
+                    yield response
+
+
+def stream_with_retry(url, identity=None, identity_callable=None, use_s3_cache: Optional[bool] = None, **kwargs):
+    """
+    Sends a streaming GET request with retry functionality, identity handling, and S3 caching support.
+    S3 cache operations are not subject to throttling, only HTTP requests are throttled.
 
     Args:
         url (str): The URL to send the streaming GET request to.
         identity (str, optional): The identity to use for the request. Defaults to None.
         identity_callable (callable, optional): A callable that returns the identity. Defaults to None.
+        use_s3_cache (bool, optional): Whether to use S3 caching. If None, auto-detect based on S3 configuration.
         **kwargs: Additional keyword arguments to pass to the underlying httpx.Client.stream() method.
 
     Yields:
-        bytes: The bytes of the response content.
+        httpx.Response: The response object with streaming capabilities.
 
     Raises:
         TooManyRequestsError: If the response status code is 429 (Too Many Requests).
     """
-    with http_client() as client:
-        with client.stream("GET", url, **kwargs) as response:
-            if response.status_code == 429:
-                raise TooManyRequestsError(url)
-            elif is_redirect(response):
-                response = stream_with_retry(response.headers["Location"],
-                                        identity=identity,
-                                        identity_callable=identity_callable, **kwargs)
-                yield from response
-            else:
-                yield response
+    print(f"📡 STREAM REQUEST: Starting stream request for URL: {url}")
+    
+    # Try to get from S3 cache first (not throttled)
+    print(f"Checking S3 cache first for URL: {url}")
+    cached_content = _stream_from_s3_cache(url, use_s3_cache)
+    if cached_content is not None:
+        print(f"✅ USING S3 CACHE: Serving content from S3 cache for URL: {url}")
+        # Create a mock response object for cached content
+        from .mock_response import create_cached_response
+        cached_response = create_cached_response(cached_content, url)
+        yield cached_response
+        print(f"✅ S3 CACHE COMPLETE: Successfully served cached content for URL: {url}")
+        return
+    
+    # Stream from HTTP if not in cache (throttled)
+    print(f"🌐 FALLBACK TO HTTP: S3 cache miss, falling back to HTTP request for URL: {url}")
+    yield from _stream_from_http(url, identity=identity, identity_callable=identity_callable, use_s3_cache=use_s3_cache, **kwargs)
+    print(f"✅ HTTP STREAM COMPLETE: Finished HTTP streaming for URL: {url}")
 
 
 @retry(on=RequestError, attempts=attempts, timeout=retry_timeout, wait_initial=wait_initial)
@@ -407,15 +560,74 @@ def save_or_return_content(content: Union[str, bytes], path: Optional[Union[str,
     return content
 
 
-def download_file(url: str, as_text: bool = None, path: Optional[Union[str, Path]] = None) -> Union[str, bytes, None]:
+def _get_from_s3_cache(url, as_text: bool, use_s3_cache: Optional[bool] = None):
     """
-    Download a file from a URL.
+    Internal function to get content from S3 cache without throttling.
+    
+    Returns:
+        Content or None: Cached content if found, None otherwise.
+    """
+    from .s3_utils import should_use_s3_cache, get_s3_cache_key
+    
+    # Determine if S3 cache should be used
+    use_cache = should_use_s3_cache(use_s3_cache)
+
+    # Try to get from S3 cache first
+    if use_cache:
+        try:
+            s3_handler = S3FileHandler()
+            # Create a cache key based on the URL
+            s3_key = get_s3_cache_key(url)
+            
+            # Check if file exists in S3
+            if s3_handler.file_exists(s3_key):
+                print(f"Found cached file in S3: {s3_key}")
+                cached_content = s3_handler.read_file_content(s3_key)
+                if cached_content is not None:
+                    if not as_text:
+                        cached_content = cached_content.encode('utf-8')
+                    return cached_content
+        except Exception as e:
+            print(f"S3 cache read failed: {e}, falling back to HTTP download")
+    
+    return None
+
+
+def _cache_file_to_s3(content, url: str, use_s3_cache: Optional[bool] = None):
+    """
+    Internal function to cache file content to S3 without throttling.
+    """
+    from .s3_utils import should_use_s3_cache, get_s3_cache_key
+    
+    use_cache = should_use_s3_cache(use_s3_cache)
+    if use_cache:
+        try:
+            s3_handler = S3FileHandler()
+            s3_key = get_s3_cache_key(url)
+            
+            # Convert content to string for S3 storage
+            cache_content = content
+            if isinstance(content, bytes):
+                cache_content = content.decode('utf-8', errors='ignore')
+            
+            s3_handler.upload_content(cache_content, s3_key)
+            print(f"Cached file to S3: {s3_key}")
+        except Exception as e:
+            print(f"S3 cache write failed: {e}")
+
+
+def download_file(url: str, as_text: bool = None, path: Optional[Union[str, Path]] = None, use_s3_cache: Optional[bool] = None) -> Union[str, bytes, None]:
+    """
+    Download a file from a URL with S3 caching support.
+    S3 cache operations are not subject to throttling, only HTTP requests are throttled.
+    JSON files are not cached to ensure fresh data.
 
     Args:
         url (str): The URL of the file to download.
         as_text (bool, optional): Whether to download the file as text or binary.
         path (str or Path, optional): The path where the file should be saved.
         If None, the default is determined based on the file extension. Defaults to None.
+        use_s3_cache (bool, optional): Whether to use S3 caching. If None, auto-detect based on S3 configuration.
 
     Returns:
         str or bytes: The content of the downloaded file, either as text or binary data.
@@ -424,6 +636,19 @@ def download_file(url: str, as_text: bool = None, path: Optional[Union[str, Path
         # Set the default based on the file extension
         as_text = url.endswith(text_extensions)
 
+    # Skip cache for JSON files to ensure fresh data
+    is_json_file = url.lower().endswith('.json')
+    
+    # Try to get from S3 cache first (not throttled), but skip for JSON files
+    if not is_json_file:
+        cached_content = _get_from_s3_cache(url, as_text, use_s3_cache)
+        if cached_content is not None:
+            path = Path(path) if path else None
+            if path and path.is_dir():
+                path = path / os.path.basename(url)
+            return save_or_return_content(cached_content, path)
+
+    # Download from URL if not in cache (throttled)
     response = get_with_retry(url=url)
     inspect_response(response)
 
@@ -446,36 +671,68 @@ def download_file(url: str, as_text: bool = None, path: Optional[Union[str, Path
         else:
             file_content = response.content
 
+    # Cache the content to S3 (not throttled), but skip for JSON files
+    if not is_json_file:
+        _cache_file_to_s3(file_content, url, use_s3_cache)
+
     path = Path(path) if path else None
     if path and path.is_dir():
         path = path / os.path.basename(url)
     return save_or_return_content(file_content, path)
 
 
-async def download_file_async(client: AsyncClient, url: str, as_text: bool = None, path: Optional[Union[str, Path]] = None) -> Union[
+async def download_file_async(client: AsyncClient, url: str, as_text: bool = None, path: Optional[Union[str, Path]] = None, use_s3_cache: Optional[bool] = None) -> Union[
     str, bytes, None]:
     """
-    Download a file from a URL asynchronously.
+    Download a file from a URL asynchronously with S3 caching support.
 
     Args:
         url (str): The URL of the file to download.
         as_text (bool, optional): Whether to download the file as text or binary.
             If None, the default is determined based on the file extension. Defaults to None.
         path (str or Path, optional): The path where the file should be saved.
+        use_s3_cache (bool, optional): Whether to use S3 caching. If None, auto-detect based on S3 configuration.
 
     Returns:
         str or bytes: The content of the downloaded file, either as text or binary data.
     """
+    from .s3_utils import should_use_s3_cache, get_s3_cache_key
+    
     if as_text is None:
         # Set the default based on the file extension
         as_text = url.endswith(text_extensions)
 
+    # Determine if S3 cache should be used
+    use_cache = should_use_s3_cache(use_s3_cache)
+
+    # Try to get from S3 cache first
+    if use_cache:
+        try:
+            s3_handler = S3FileHandler()
+            # Create a cache key based on the URL
+            s3_key = get_s3_cache_key(url)
+            
+            # Check if file exists in S3
+            if s3_handler.file_exists(s3_key):
+                print(f"Found cached file in S3: {s3_key}")
+                cached_content = s3_handler.read_file_content(s3_key)
+                if cached_content is not None:
+                    if not as_text:
+                        cached_content = cached_content.encode('utf-8')
+                    path = Path(path) if path else None
+                    if path and path.is_dir():
+                        path = path / os.path.basename(url)
+                    return save_or_return_content(cached_content, path)
+        except Exception as e:
+            print(f"S3 cache read failed: {e}, falling back to HTTP download")
+
+    # Download from URL if not in cache
     response = await get_with_retry_async(client, url)
     inspect_response(response)
 
     if as_text:
         # Download as text
-        return response.text
+        content = response.text
     else:
         # Download as binary
         content = response.content
@@ -484,6 +741,23 @@ async def download_file_async(client: AsyncClient, url: str, as_text: bool = Non
         if response.headers.get("Content-Encoding") == "gzip":
             content = gzip.decompress(content)
 
+    # Cache the content to S3
+    if use_cache:
+        try:
+            s3_handler = S3FileHandler()
+            s3_key = get_s3_cache_key(url)
+            
+            # Convert content to string for S3 storage
+            cache_content = content
+            if isinstance(content, bytes):
+                cache_content = content.decode('utf-8', errors='ignore')
+            
+            s3_handler.upload_content(cache_content, s3_key)
+            print(f"Cached file to S3: {s3_key}")
+        except Exception as e:
+            print(f"S3 cache write failed: {e}")
+
+    path = Path(path) if path else None
     if path and path.is_dir():
         path = path / os.path.basename(url)
 
@@ -563,35 +837,48 @@ async def stream_file(url: str,
             return save_or_return_content(content, path)
 
 
-def download_json(data_url: str) -> dict:
+def download_json(data_url: str, use_s3_cache: Optional[bool] = None) -> dict:
     """
-    Download JSON data from a URL.
+    Download JSON data from a URL with S3 caching support.
 
     Args:
         data_url (str): The URL of the JSON data to download.
+        use_s3_cache (bool, optional): Whether to use S3 caching. If None, auto-detect based on S3 configuration.
 
     Returns:
         dict: The parsed JSON data.
     """
-    content = download_file(data_url, as_text=True)
+    content = download_file(data_url, as_text=True, use_s3_cache=use_s3_cache)
     return json.loads(content)
 
 
-def download_text(url: str) -> Optional[str]:
-    return download_file(url, as_text=True)
-
-
-async def download_json_async(client: AsyncClient, data_url: str) -> dict:
+def download_text(url: str, use_s3_cache: Optional[bool] = None) -> Optional[str]:
     """
-    Download JSON data from a URL asynchronously.
+    Download text content from a URL with S3 caching support.
 
     Args:
+        url (str): The URL to download text from.
+        use_s3_cache (bool, optional): Whether to use S3 caching. If None, auto-detect based on S3 configuration.
+
+    Returns:
+        Optional[str]: The text content or None if failed.
+    """
+    return download_file(url, as_text=True, use_s3_cache=use_s3_cache)
+
+
+async def download_json_async(client: AsyncClient, data_url: str, use_s3_cache: Optional[bool] = None) -> dict:
+    """
+    Download JSON data from a URL asynchronously with S3 caching support.
+
+    Args:
+        client (AsyncClient): The HTTP client to use.
         data_url (str): The URL of the JSON data to download.
+        use_s3_cache (bool, optional): Whether to use S3 caching. If None, auto-detect based on S3 configuration.
 
     Returns:
         dict: The parsed JSON data.
     """
-    content = await download_file_async(client=client, url=data_url, as_text=True)
+    content = await download_file_async(client=client, url=data_url, as_text=True, use_s3_cache=use_s3_cache)
     return json.loads(content)
 
 
@@ -722,7 +1009,7 @@ async def download_bulk_data(url: str,
                 if download_filename.exists():
                     download_filename.unlink()
             except Exception as e:
-                logger.warning(f"Failed to delete archive file {download_filename}: {e}")
+                print(f"Failed to delete archive file {download_filename}: {e}")
 
         return download_path
 

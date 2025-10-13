@@ -356,7 +356,7 @@ def extract_items_with_ai(
         ],
         temperature=0.1,
     )
-    import pdb;pdb.set_trace()
+
     # Parse response
     result_text = response.choices[0].message.content
     if not result_text:
