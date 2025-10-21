@@ -249,6 +249,117 @@ class BaseHtmlParser:
 
         return soup
 
+    def _extract_table_links_base_no_pagenumber(
+        self, soup: BeautifulSoup, use_part_detection: bool = False
+    ) -> List[List[Dict[str, Any]]]:
+        """
+        Base method to extract links from HTML tables.
+        Enhanced to handle item rows without links by using first sub-item's link.
+
+        Args:
+            soup: BeautifulSoup object
+            use_part_detection: Whether to detect part information (for 10-Q)
+
+        Returns:
+            List of tables with link information
+        """
+        link_info: List[List[Dict[str, Any]]] = []
+        tables = soup.find_all("table")
+
+        part_regex = (
+            re.compile(r"^\s*(Part\s+[IVXLC]+)\s*", re.IGNORECASE)
+            if use_part_detection
+            else None
+        )
+        part = None
+
+        for table_idx, table in enumerate(tables):
+            table_links: List[Dict[str, Any]] = []
+            rows = table.find_all("tr")
+
+            # Process rows and handle item rows without links
+            for row_idx, row in enumerate(rows):
+                if use_part_detection and part_regex:
+                    row_text = row.get_text().strip()
+                    part_match = part_regex.match(row_text)
+                    if part_match:
+                        part = re.sub(r"\s+", " ", part_match.group(1).lower())
+
+                cells = row.find_all("td", recursive=False)
+
+                if cells:
+                    has_links = any(cell.find("a") for cell in cells)
+
+                    text = []
+                    for cell in cells:
+                        cell_text = cell.get_text(
+                            separator="" if not use_part_detection else "  ",
+                            strip=True,
+                        )
+                        if use_part_detection and len(cell_text) > 500:
+                            cell_text = cell_text[:500]
+                        text.append(
+                            " ".join(cell_text.split())
+                            if not use_part_detection
+                            else cell_text
+                        )
+
+
+                    # Handle rows with links
+                    if has_links:
+                        row_links = self._extract_row_links(
+                            cells,
+                            text,
+                            (
+                                "extracted"
+                                if "signature" in row.get_text().lower()
+                                else part
+                            ),
+                            use_part_detection,
+                        )
+                        if row_links:
+                            table_links.extend(row_links)
+                    elif has_links and self._is_item_header_row(text):
+                        row_links = self._extract_row_links(
+                            cells,
+                            text,
+                            (
+                                "extracted"
+                                if "signature" in row.get_text().lower()
+                                else part
+                            ),
+                            use_part_detection,
+                        )
+                        if row_links:
+                            table_links.extend(row_links)
+                    # Handle item rows without links (e.g., "Item 1. Financial Statements")
+                    elif self._is_item_header_row(text):
+                        # Look for the first sub-item with a link in subsequent rows
+                        first_subitem_link = self._find_first_subitem_link(
+                            rows, row_idx + 1
+                        )
+                        if first_subitem_link:
+                            # Create a link entry using the item text and first sub-item's link
+                            item_link_data = {
+                                "text": text,
+                                "link": first_subitem_link,  # Add 'link' key for compatibility
+                                "links": [first_subitem_link],
+                                "is_multi_section": False,
+                                "link_count": 1,
+                                "is_item_header": True,  # Mark as item header for identification
+                            }
+                            if use_part_detection and part:
+                                item_link_data["part"] = part
+                            table_links.append(item_link_data)
+                            logging.info(
+                                f"Item header without link found: {text[0] if text else 'Unknown'}, using first sub-item link: {first_subitem_link}"
+                            )
+
+            if table_links:
+                link_info.append(table_links)
+
+        return link_info
+
     def _extract_table_links_base(
         self, soup: BeautifulSoup, use_part_detection: bool = False
     ) -> List[List[Dict[str, Any]]]:

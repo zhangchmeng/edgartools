@@ -16,7 +16,7 @@ from edgar._markdown import MarkdownContent
 from edgar.formatting import datefmt
 from edgar.files.html import Document
 from edgar.files.html_documents import HtmlDocument
-from edgar.files.htmltools import ChunkedDocument, chunks2df, detect_decimal_items, adjust_for_empty_items
+from edgar.files.htmltools import ChunkedDocument, ChunkedDocumentSplitFinancial, chunks2df, detect_decimal_items, adjust_for_empty_items
 from edgar.financials import Financials
 from edgar.richtools import repr_rich, rich_to_text
 
@@ -74,7 +74,7 @@ class CompanyReport:
     @property
     @lru_cache(maxsize=1)
     def chunked_document(self):
-        return ChunkedDocument(self._filing.html())
+        return ChunkedDocumentSplitFinancial(self._filing.html())
 
     @property
     def doc(self):
@@ -277,15 +277,71 @@ class TenK(CompanyReport):
     @property
     @lru_cache(maxsize=1)
     def chunked_document(self):
-        return ChunkedDocument(self._filing.html(), prefix_src=self._filing.base_dir)
+        return ChunkedDocumentSplitFinancial(self._filing.html(), prefix_src=self._filing.base_dir)
     
     @lru_cache(maxsize=1)
     def id_parse_document(self, markdown:bool=False):
         from edgar.files.html_documents_id_parser import ParsedHtml10K
         return ParsedHtml10K().extract_html(self._filing.html(), self.structure, markdown=markdown, form_type=self._filing.form)
     
+    @classmethod
+    def _split_financial_content(cls):
+        # 判断 item 8/ item 16内容长度均小于10000时，
+        # 尝试从 item 16/signature 中拆分财务模块 
+            # 判断 item 16/  signature 较长的item
+            # 根据financial 关键字判断是否可能为财务模块的行，然后分割长文本
+            # 将分割出的较长的文本 附加到item 8中
+        pass
+
     def get_re_parse_res(self, markdown:bool=True):
-        return self.chunked_document.part_item_res(markdown=markdown)
+        part_item_res = self.chunked_document.part_item_res(markdown=markdown)
+        financial_content = self.chunked_document.assemble_financial_content(markdown=markdown)
+        if financial_content:
+            if part_item_res.get("part ii") and part_item_res['part ii'].get("item 8"):
+                part_item_res['part ii']['item 8'] += financial_content
+        if len(part_item_res.get("part ii", {}).get("item 8", "")) < 10000 and len(part_item_res.get("part iv", {}).get("item 15", "")) < 10000:
+            # 从以下两个模块中找出字符长度最长的模块，然后找出第一个能匹配到的字符
+            # "CONSOLIDATED FINANCIAL STATEMENTS"（不区分大小写），将从该匹配处开始的内容附加到 item 8 中
+            # 候选模块：result["extracted"]["signature"], result["part iv"]["item 16"]
+            signature_text = ""
+            item16_text = ""
+            try:
+                signature_text = part_item_res.get("extracted", {}).get("signature", "") or ""
+            except Exception:
+                signature_text = ""
+            try:
+                item16_text = part_item_res.get("part iv", {}).get("item 16", "") or ""
+            except Exception:
+                item16_text = ""
+        
+            # 选择较长文本并记录来源模块键
+            if len(item16_text) >= len(signature_text):
+                candidate_text = item16_text
+                candidate_key = ("part iv", "item 16")
+            else:
+                candidate_text = signature_text
+                candidate_key = ("extracted", "signature")
+        
+            if candidate_text:
+                import re
+                match = re.search(r"CONSOLIDATED\s+FINANCIAL\s+STATEMENTS", candidate_text, re.IGNORECASE)
+                if match:
+                    # 被拆分的数据：上半部分（匹配之前）填充回原本的模块，下半部分（从匹配开始）附加到 item 8
+                    before = candidate_text[:match.start()]
+                    tail = candidate_text[match.start():]
+        
+                    # 为避免附加过多内容，尝试在下一个可能的章节标题处截断尾部
+                    stop = re.search(r"\n\s*(SIGNATURES|ITEM\s+\d+|EXHIBITS?)\b", tail, re.IGNORECASE)
+                    if stop:
+                        tail = tail[:stop.start()]
+        
+                    # 上半部分填充回原本的模块（覆盖原模块内容为匹配前文本）
+                    part_item_res.setdefault(candidate_key[0], {})[candidate_key[1]] = (before or "").strip()
+        
+                    # 下半部分附加到 item 8
+                    part_item_res.setdefault("part ii", {}).setdefault("item 8", "")
+                    part_item_res["part ii"]["item 8"] += "\n" + tail.strip()
+        return part_item_res
 
     def get_id_parse_res(self, markdown:bool=True):
         return self.id_parse_document(markdown=markdown)
@@ -497,7 +553,7 @@ class TenQ(CompanyReport):
     @property
     @lru_cache(maxsize=1)
     def chunked_document(self):
-        return ChunkedDocument(self._filing.html(), prefix_src=self._filing.base_dir)
+        return ChunkedDocumentSplitFinancial(self._filing.html(), prefix_src=self._filing.base_dir)
     
     def get_structure(self):
         # Create the main tree

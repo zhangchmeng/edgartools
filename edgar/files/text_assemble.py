@@ -292,9 +292,9 @@ class AssembleText:
 
                 # 使用更高效的元素遍历方法，并防止重复元素
                 processed_elements = set()  # 用于跟踪已处理的元素ID
-                elements_to_process = []  # 临时存储需要处理的元素
+                elements_to_process = [start_element]  # 临时存储需要处理的元素
 
-                # 第一阶段：收集所有可能的内容元素
+                # 第一阶段：收集所有可能的内容元素（不包含 end_link 本身）
                 while current and current != end_element:
                     # 只包含有意义的内容元素
                     if AssembleText.is_content_element(current):
@@ -319,7 +319,7 @@ class AssembleText:
                         break
                     current = next_elem
 
-                # 第二阶段：过滤掉已经被其祖先元素包含的元素
+                # 第二阶段：过滤掉已经被其祖先元素或起始链接包含的元素
                 processed_elements.clear()  # 重置已处理元素集合
 
                 # 按照元素在文档中的位置排序（从上到下）
@@ -399,11 +399,50 @@ class AssembleText:
                 if intro_elements:
                     content_by_link[("extracted", "Item 0")] = intro_elements
 
-        # return content_by_link content_by_link['part i', 'ITEM 1']
         results = {}
         for key, value in content_by_link.items():
             results[key] = AssembleText.assemble_html_document(value)
+        
+
+        if not any("signature" in str(key).lower() for key in content_by_link.keys()):
+            last_item = item_links[-1]
+            last_item_name = last_item[0] if isinstance(last_item, tuple) else last_item[0]
+            last_content = results.get(last_item_name, "")
+            if last_content:
+                sig_key = ["SIGNATURES", "SIGNATURE"]
+                content_lines = last_content.split("\n")
+                signature_line_index = None
+                
+                # Optimization: limit search scope
+                search_lines = content_lines[-100:] if len(content_lines) > 100 else content_lines
+                for i, line in enumerate(search_lines):
+                    if line.strip().upper() in sig_key:
+                        signature_line_index = len(content_lines) - len(search_lines) + i
+                        break
+                
+                if signature_line_index is not None:
+                    before_sig = "\n".join(content_lines[:signature_line_index])
+                    sig_start_pos = len(before_sig) + 1
+                    # items["Signature"] = last_content[sig_start_pos:].strip()
+                    # items[last_item_name] = before_sig.strip()
+                    results[("extracted", "signature")] = last_content[sig_start_pos:].strip()
+                    results[last_item_name] = before_sig.strip()
+                else:
+                    results[("extracted", "signature")] = ""
         return results
+
+    @staticmethod
+    def splite_f_footer_page(html_content):
+        """
+        将页脚为F-/d的页面单独取出，后续进行处理
+        并返回取出单独内容的后的html_content
+        """
+        soup = BeautifulSoup(html_content, "html.parser")
+        footer = soup.find("footer")
+        if footer and footer.get_text().strip().upper() == "F-/d":
+            return footer.extract(), html_content.replace(str(footer), "")
+        return None, html_content
+
 
 if __name__ == "__main__":
     # 设置日志级别以显示性能监控信息

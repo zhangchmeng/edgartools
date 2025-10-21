@@ -4,34 +4,45 @@ from functools import lru_cache
 from typing import Optional, Union, Dict, List, Any, Tuple
 
 import pandas as pd
-from bs4 import BeautifulSoup, Tag, Comment, XMLParsedAsHTMLWarning, NavigableString
+from bs4 import (
+    BeautifulSoup,
+    Tag,
+    Comment,
+    XMLParsedAsHTMLWarning,
+    NavigableString,
+)
 from rich import box
 from rich.table import Table
 
 from edgar.datatools import table_html_to_dataframe, clean_column_text
 from edgar.richtools import repr_rich
+from edgar.files.extract_financial.get_financial import (
+    extract_financial_statement,
+)
 
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
-__all__ = ['DocumentData',
-           'HtmlDocument',
-           'Block',
-           'TextBlock',
-           'TableBlock',
-           'TextAnalysis',
-           'SECLine',
-           'table_to_text',
-           'table_to_markdown',
-           'html_to_text',
-           'get_clean_html', ]
+__all__ = [
+    "DocumentData",
+    "HtmlDocument",
+    "Block",
+    "TextBlock",
+    "TableBlock",
+    "TextAnalysis",
+    "SECLine",
+    "table_to_text",
+    "table_to_markdown",
+    "html_to_text",
+    "get_clean_html",
+]
 
 NAMESPACES = {
-    "xbrli": 'http://www.xbrl.org/2003/instance',
-    "i": 'http://www.xbrl.org/2003/instance',
+    "xbrli": "http://www.xbrl.org/2003/instance",
+    "i": "http://www.xbrl.org/2003/instance",
     "ix": "http://www.xbrl.org/2013/inlineXBRL",
-    "xbrldi": 'http://xbrl.org/2006/xbrldi',
+    "xbrldi": "http://xbrl.org/2006/xbrldi",
     "xbrll": "http://www.xbrl.org/2003/linkbase",
-    "link": 'http://www.xbrl.org/2003/linkbase',
+    "link": "http://www.xbrl.org/2003/linkbase",
     "xlink": "http://www.w3.org/1999/xlink",
     "dei": "http://xbrl.sec.gov/dei/2023",
     "country": "http://xbrl.sec.gov/country/2023",
@@ -43,13 +54,13 @@ NAMESPACES = {
     "cef": "http://xbrl.sec.gov/cef/2023",
     "srt": "http://fasb.org/srt/2023",
     "ixt": "http://www.xbrl.org/inlineXBRL/transformation/2022-02-16",
-    "ixt-sec": "http://www.sec.gov/inlineXBRL/transformation/2015-08-31"
+    "ixt-sec": "http://www.sec.gov/inlineXBRL/transformation/2015-08-31",
     # Add other namespaces as needed
 }
 
 
 def ns_tag(tag):
-    return re.compile(r'(?:' + '|'.join(NAMESPACES.keys()) + r'):' + tag)
+    return re.compile(r"(?:" + "|".join(NAMESPACES.keys()) + r"):" + tag)
 
 
 class DocumentData:
@@ -59,11 +70,13 @@ class DocumentData:
     Contains the hidden properties, schema references, context and units
     """
 
-    def __init__(self,
-                 data: pd.DataFrame,
-                 schema_refs: Optional[List[str]] = None,
-                 context: Dict[str, Dict[str, Union[str, None]]] = None,
-                 units: Dict[str, str] = None):
+    def __init__(
+        self,
+        data: pd.DataFrame,
+        schema_refs: Optional[List[str]] = None,
+        context: Dict[str, Dict[str, Union[str, None]]] = None,
+        units: Dict[str, str] = None,
+    ):
         self.data = data
         self.context = context or {}
         self.units = units or {}
@@ -73,7 +86,7 @@ class DocumentData:
         result = self.data[self.data.name == item]
         if not result.empty:
             # Return a dict
-            return result.to_dict(orient='records')[0]
+            return result.to_dict(orient="records")[0]
 
     def __contains__(self, item):
         if self.data is None or self.data.empty:
@@ -84,9 +97,9 @@ class DocumentData:
         return "Inline Xbrl Header"
 
     def __rich__(self):
-        table = Table("", "name", "value",
-                      title="Inline Xbrl Document",
-                      box=box.SIMPLE)
+        table = Table(
+            "", "name", "value", title="Inline Xbrl Document", box=box.SIMPLE
+        )
         for row in self.data.itertuples():
             table.add_row(row.namespace, row.name, row.value)
         return table
@@ -102,7 +115,11 @@ class DocumentData:
 
         for header_tag in ix_header_tags[1:]:
             next_header = cls.parse_header(header_tag)
-            dfs = [df for df in [ix_header.data, next_header.data] if df is not None]
+            dfs = [
+                df
+                for df in [ix_header.data, next_header.data]
+                if df is not None
+            ]
             ix_header.properties = pd.concat(dfs) if len(dfs) > 0 else None
             ix_header.schema_refs.extend(next_header.schema_refs)
             ix_header.context.update(next_header.context)
@@ -114,95 +131,138 @@ class DocumentData:
     def parse_header(cls, ix_header_element: Tag):
         hidden_props, schema_refs, context_map, unit_map = None, [], {}, {}
 
-        resource_tag = ix_header_element.find(ns_tag('resources'))
+        resource_tag = ix_header_element.find(ns_tag("resources"))
         if resource_tag:
             # Parse contexts
-            context_tags = resource_tag.find_all(ns_tag('context'))
+            context_tags = resource_tag.find_all(ns_tag("context"))
             for ctx in context_tags:
-                context_id = ctx.get('id')
-                entity_tag = ctx.find(ns_tag('entity'))
-                identifier = entity_tag.find(ns_tag('identifier')).text if entity_tag else None
+                context_id = ctx.get("id")
+                entity_tag = ctx.find(ns_tag("entity"))
+                identifier = (
+                    entity_tag.find(ns_tag("identifier")).text
+                    if entity_tag
+                    else None
+                )
 
-                period_tag = ctx.find(ns_tag('period'))
-                instant = period_tag.find(ns_tag('instant'))
+                period_tag = ctx.find(ns_tag("period"))
+                instant = period_tag.find(ns_tag("instant"))
                 if instant:
                     start = end = instant.text
                 else:
-                    start = period_tag.find(ns_tag('startdate')).text if period_tag.find(ns_tag('startdate')) else None
-                    end = period_tag.find(ns_tag('enddate')).text if period_tag.find(ns_tag('enddate')) else None
+                    start = (
+                        period_tag.find(ns_tag("startdate")).text
+                        if period_tag.find(ns_tag("startdate"))
+                        else None
+                    )
+                    end = (
+                        period_tag.find(ns_tag("enddate")).text
+                        if period_tag.find(ns_tag("enddate"))
+                        else None
+                    )
 
-                context_map[context_id] = {'identifier': identifier, 'start': start, 'end': end}
+                context_map[context_id] = {
+                    "identifier": identifier,
+                    "start": start,
+                    "end": end,
+                }
 
-                segment = ctx.find(ns_tag('segment'))
+                segment = ctx.find(ns_tag("segment"))
                 if segment:
-                    context_map[context_id]['dimensions'] = str({m.get('dimension'): m.text
-                                                                 for m in segment.find_all(ns_tag('explicitMember'))})
+                    context_map[context_id]["dimensions"] = str(
+                        {
+                            m.get("dimension"): m.text
+                            for m in segment.find_all(ns_tag("explicitMember"))
+                        }
+                    )
 
             # Parse units
-            unit_tags = resource_tag.find_all(ns_tag('unit'))
+            unit_tags = resource_tag.find_all(ns_tag("unit"))
             for unit in unit_tags:
-                unit_id = unit.get('id')
-                divide = unit.find(ns_tag('divide'))
+                unit_id = unit.get("id")
+                divide = unit.find(ns_tag("divide"))
                 if divide:
-                    numerator = divide.find(ns_tag('unitnumerator')).find(ns_tag('measure')).text
-                    denominator = divide.find(ns_tag('unitdenominator')).find(ns_tag('measure')).text
-                    unit_map[unit_id] = f"{numerator.split(':')[-1]} per {denominator.split(':')[-1]}"
+                    numerator = (
+                        divide.find(ns_tag("unitnumerator"))
+                        .find(ns_tag("measure"))
+                        .text
+                    )
+                    denominator = (
+                        divide.find(ns_tag("unitdenominator"))
+                        .find(ns_tag("measure"))
+                        .text
+                    )
+                    unit_map[unit_id] = (
+                        f"{numerator.split(':')[-1]} per {denominator.split(':')[-1]}"
+                    )
                 else:
-                    unit_map[unit_id] = unit.find(ns_tag('measure')).text.split(':')[-1]
+                    unit_map[unit_id] = unit.find(
+                        ns_tag("measure")
+                    ).text.split(":")[-1]
 
             # Parse hidden elements
-            hidden_elements = ix_header_element.find(ns_tag('hidden'))
+            hidden_elements = ix_header_element.find(ns_tag("hidden"))
             if hidden_elements:
                 props = []
                 for el in hidden_elements.find_all():
-                    name_parts = el.get('name', '').partition(':')
+                    name_parts = el.get("name", "").partition(":")
                     prop = {
-                        'name': name_parts[2],
-                        'namespace': name_parts[0],
-                        'value': el.text.strip(),
-                        'tag': el.name
+                        "name": name_parts[2],
+                        "namespace": name_parts[0],
+                        "value": el.text.strip(),
+                        "tag": el.name,
                     }
-                    ctx_ref = el.get('contextref')
+                    ctx_ref = el.get("contextref")
                     if ctx_ref:
                         ctx = context_map.get(ctx_ref, {})
-                        prop.update({
-                            'start': ctx.get('start'),
-                            'end': ctx.get('end'),
-                            'identifier': ctx.get('identifier')
-                        })
+                        prop.update(
+                            {
+                                "start": ctx.get("start"),
+                                "end": ctx.get("end"),
+                                "identifier": ctx.get("identifier"),
+                            }
+                        )
                     props.append(prop)
                 hidden_props = pd.DataFrame(props)
 
         # Parse references
-        references = ix_header_element.find(ns_tag('references'))
+        references = ix_header_element.find(ns_tag("references"))
         if references:
-            schema_refs = [s.get('xlink:href') for s in references.find_all() if s.get('xlink:href')]
+            schema_refs = [
+                s.get("xlink:href")
+                for s in references.find_all()
+                if s.get("xlink:href")
+            ]
 
         ix_header_element.decompose()
-        return cls(data=hidden_props, schema_refs=schema_refs, context=context_map, units=unit_map)
+        return cls(
+            data=hidden_props,
+            schema_refs=schema_refs,
+            context=context_map,
+            units=unit_map,
+        )
 
     def parse_inline_data(self, start_element: Tag):
         records = []
-        inline_tags = ns_tag('nonfraction|nonnumeric|fraction')
+        inline_tags = ns_tag("nonfraction|nonnumeric|fraction")
         for ix_tag in start_element.find_all(inline_tags):
             if ix_tag.name is None:
                 continue
 
             record = dict(ix_tag.attrs)
-            record['tag'] = ix_tag.name
-            context_ref = record.get('contextref')
+            record["tag"] = ix_tag.name
+            context_ref = record.get("contextref")
             if context_ref:
                 record.update(self.context.get(context_ref, {}))
-                record.pop('contextref', None)
+                record.pop("contextref", None)
 
-            record['value'] = ix_tag.text.strip()
-            name_parts = record.get('name', '').partition(':')
-            record['namespace'], record['name'] = name_parts[0], name_parts[2]
+            record["value"] = ix_tag.text.strip()
+            name_parts = record.get("name", "").partition(":")
+            record["namespace"], record["name"] = name_parts[0], name_parts[2]
 
-            unit_ref = record.get('unitref')
+            unit_ref = record.get("unitref")
             if unit_ref:
-                record['unit'] = self.units.get(unit_ref)
-                record.pop('unitref', None)
+                record["unit"] = self.units.get(unit_ref)
+                record.pop("unitref", None)
 
             records.append(record)
 
@@ -210,7 +270,7 @@ class DocumentData:
         self.data = pd.concat([self.data, records_df], ignore_index=True)
 
 
-INLINE_IXBRL_TAGS = ['ix:nonfraction', 'ix:nonnumeric', 'ix:fraction']
+INLINE_IXBRL_TAGS = ["ix:nonfraction", "ix:nonnumeric", "ix:fraction"]
 
 
 class Block:
@@ -234,7 +294,7 @@ class Block:
 
     def is_linebreak(self) -> bool:
         # This block is a line break if it only has '\n'
-        return self.text != '' and self.text.strip('\n') == ''
+        return self.text != "" and self.text.strip("\n") == ""
 
     def __str__(self):
         return "Block"
@@ -244,21 +304,21 @@ class Block:
 
 
 class LinkBlock(Block):
-    
-    def __init__(self, text: str, tag:str, alt:str, src:str, **tags):
+
+    def __init__(self, text: str, tag: str, alt: str, src: str, **tags):
         super().__init__(text, **tags)
         self.tag = tag
         self.alt = alt
         self.src = src
         self.inline: bool = True
 
-    def get_text(self) -> str:    
+    def get_text(self) -> str:
         return f'<{self.tag} alt="{self.alt}" src="{self.src}">'
 
-    def to_markdown(self, prefix_src:str=""):
+    def to_markdown(self, prefix_src: str = ""):
         return f"![alt  {self.alt}]({prefix_src}/{self.src})\n"
-    
-    def get_complete_text(self, prefix_src:str):
+
+    def get_complete_text(self, prefix_src: str):
         return f'<{self.tag} alt="{self.alt}" src="{prefix_src}/{self.src}">\n'
 
     def __str__(self):
@@ -326,17 +386,23 @@ class TableBlock(Block):
     def __repr__(self):
         return str(self)
 
+
 item_pattern = r"(?:ITEM|Item)\s+(?:[0-9]{1,2}[A-Z]?\.?|[0-9]{1,2}\.[0-9]{2})(?![\s\n]*[0-9])"
 # part_pattern = r"^\b(PART\s+[IVXLC]+)\b"
 part_pattern = re.compile(r"^\b(PART\s+[IVXLC]+)\b", re.IGNORECASE)
 
-class HtmlDocument:
 
-    def __init__(self,
-                 blocks: List[Block],
-                 data: Optional[DocumentData] = None,
-                 ):
-        assert isinstance(blocks, list), "blocks must be a list of Block objects"
+class HtmlDocument:
+    financial_elements: List[Any] = []
+
+    def __init__(
+        self,
+        blocks: List[Block],
+        data: Optional[DocumentData] = None,
+    ):
+        assert isinstance(
+            blocks, list
+        ), "blocks must be a list of Block objects"
         self.blocks: List[Block] = blocks  # The text blocks
         self.data: Optional[DocumentData] = data  # Any data in the document
 
@@ -364,7 +430,9 @@ class HtmlDocument:
 
     def get_table_blocks(self) -> List[TableBlock]:
         """Get a list of all the table blocks in the document"""
-        return [block for block in self.blocks if isinstance(block, TableBlock)]
+        return [
+            block for block in self.blocks if isinstance(block, TableBlock)
+        ]
 
     @staticmethod
     def _compress_blocks(blocks: List[Block]):
@@ -390,14 +458,19 @@ class HtmlDocument:
             else:
                 if block.text.endswith("\n"):
                     if current_block:
-                        if current_block.text and current_block.text.strip() in ("PART", "ITEM"):
+                        if (
+                            current_block.text
+                            and current_block.text.strip() in ("PART", "ITEM")
+                        ):
                             if not block.text.strip():
-                                current_block.text  = current_block.text.strip() + " "
+                                current_block.text = (
+                                    current_block.text.strip() + " "
+                                )
                             else:
                                 current_block.text += block.text
                                 compressed_blocks.append(current_block)
                                 current_block = None  # Reset the current block
-                        elif current_block.inline and block.inline: 
+                        elif current_block.inline and block.inline:
                             current_block.text += block.text
                             compressed_blocks.append(current_block)
                             current_block = None  # Reset the current block
@@ -407,7 +480,9 @@ class HtmlDocument:
                             current_block = None  # Reset the current block
                     else:
                         compressed_blocks.append(block)
-                elif block.is_empty():  # Empty blocks get appended to the previous block
+                elif (
+                    block.is_empty()
+                ):  # Empty blocks get appended to the previous block
                     if not current_block:
                         current_block = block
                     else:
@@ -426,7 +501,9 @@ class HtmlDocument:
 
         # Strip the first block
         if compressed_blocks:
-            compressed_blocks[0].text = compressed_blocks[0].get_text().lstrip()
+            compressed_blocks[0].text = (
+                compressed_blocks[0].get_text().lstrip()
+            )
 
         return compressed_blocks
 
@@ -435,7 +512,7 @@ class HtmlDocument:
         # Remove page numbers
         decompose_page_numbers(start_element)
         merge_empty_div_elements(start_element)
-        
+
         # Now find the full text
         blocks: List[Block] = extract_and_format_content(start_element)
         # Compress the blocks
@@ -445,11 +522,13 @@ class HtmlDocument:
 
     @classmethod
     def extract_data(cls, start_element: Tag) -> Optional[DocumentData]:
-        header_elements = start_element.find_all('ix:header')
+        header_elements = start_element.find_all("ix:header")
         if len(header_elements) == 0:
             return None
-        ixbrl_document: DocumentData = DocumentData.parse_headers(header_elements)
-        
+        ixbrl_document: DocumentData = DocumentData.parse_headers(
+            header_elements
+        )
+
         for header_element in header_elements:
             header_element.decompose()
         ixbrl_document.parse_inline_data(start_element.body)
@@ -459,12 +538,40 @@ class HtmlDocument:
     def get_root(cls, html: str) -> Tag:
         # First check if the html is inside a <DOCUMENT><TEXT> block
         if "<TEXT>" in html[:500]:
-            html = get_text_between_tags(html, 'TEXT')
+            html = get_text_between_tags(html, "TEXT")
 
-        soup = BeautifulSoup(html, features='lxml')
+        soup = BeautifulSoup(html, features="lxml")
         # Cleanup the soup before extracting text (including removing comments)
         fixup_soup(soup)
-        return soup.find('html')
+        return soup.find("html")
+
+    @classmethod
+    def from_html_split_financial(cls, html: str, extract_data: bool = False):
+        res = extract_financial_statement(html)
+        if res.success:
+            cls.financial_elements = [
+                cls.extract_text(one) for one in res.page_contents_elements
+            ]
+            if res.soup:
+                root: Tag = cls.get_root(str(res.soup))
+            else:
+                root: Tag = cls.get_root(html)
+        else:
+            root: Tag = cls.get_root(html)
+        # If the root cannot be located it's not valid HTML
+        if not root:
+            return None, None
+
+        # Extract any inline data inside the html
+        data = cls.extract_data(root) if extract_data else None
+
+        # Clean the root element .. strip out the header tags, script and style tags, and table of content links
+        root = clean_html_root(root)
+
+        # Now extract the text into blocks
+        blocks: List[Block] = cls.extract_text(root)
+
+        return cls.financial_elements, cls(blocks=blocks, data=data)
 
     @classmethod
     def from_html(cls, html: str, extract_data: bool = False):
@@ -496,7 +603,9 @@ class HtmlDocument:
         for chunk in self.generate_chunks(ignore_tables=ignore_tables):
             yield HtmlDocument._render_blocks(chunk)
 
-    def generate_chunks(self, ignore_tables: bool = False) -> List[List[Block]]:
+    def generate_chunks(
+        self, ignore_tables: bool = False
+    ) -> List[List[Block]]:
         current_chunk = []
         accumulating_regular_text = False
         header_detected = False
@@ -504,11 +613,15 @@ class HtmlDocument:
 
         for i, block in enumerate(self.blocks):
 
-            if isinstance(block, TableBlock) or block.metadata.get('element') in ['ol', 'ul']:
+            if isinstance(block, TableBlock) or block.metadata.get(
+                "element"
+            ) in ["ol", "ul"]:
                 if isinstance(block, TableBlock) and ignore_tables:
                     continue
                 if current_chunk:
-                    if any(block.text.strip() for block in current_chunk):  # Avoid emitting empty chunks
+                    if any(
+                        block.text.strip() for block in current_chunk
+                    ):  # Avoid emitting empty chunks
                         yield current_chunk
                     current_chunk = []
                 yield [block]  # Yield TableBlock as its own chunk
@@ -522,11 +635,13 @@ class HtmlDocument:
                 # Check if the block is an "Item" header
                 is_item_header = bool(re.match(item_pattern, block.text))
                 is_part_header = bool(part_pattern.match(block.text))
-                
+
                 if is_part_header:
-                     # Yield the current chunk before starting a new one with the "Part" header
+                    # Yield the current chunk before starting a new one with the "Part" header
                     if current_chunk:
-                        if any(block.text.strip() for block in current_chunk):  # Avoid emitting empty chunks
+                        if any(
+                            block.text.strip() for block in current_chunk
+                        ):  # Avoid emitting empty chunks
                             yield current_chunk
                         yield [block]
                     else:
@@ -535,11 +650,15 @@ class HtmlDocument:
                     # Update flags accordingly
                     item_header_detected = True
                     header_detected = True  # "Item" headers are considered regular headers for flag purposes
-                    accumulating_regular_text = False  # Reset since we're starting a new section
+                    accumulating_regular_text = (
+                        False  # Reset since we're starting a new section
+                    )
                 elif is_item_header:
                     # Yield the current chunk before starting a new one with the "Item" header
                     if current_chunk:
-                        if any(block.text.strip() for block in current_chunk):  # Avoid emitting empty chunks
+                        if any(
+                            block.text.strip() for block in current_chunk
+                        ):  # Avoid emitting empty chunks
                             yield current_chunk
 
                     # Initialize the new chunk with the "Item" header
@@ -548,23 +667,39 @@ class HtmlDocument:
                     # Update flags accordingly
                     item_header_detected = True
                     header_detected = True  # "Item" headers are considered regular headers for flag purposes
-                    accumulating_regular_text = False  # Reset since we're starting a new section
+                    accumulating_regular_text = (
+                        False  # Reset since we're starting a new section
+                    )
                 elif analysis.is_header:
-                    if current_chunk and not accumulating_regular_text and not item_header_detected:
-                        if any(block.text.strip() for block in current_chunk):  # Avoid emitting empty chunks
+                    if (
+                        current_chunk
+                        and not accumulating_regular_text
+                        and not item_header_detected
+                    ):
+                        if any(
+                            block.text.strip() for block in current_chunk
+                        ):  # Avoid emitting empty chunks
                             yield current_chunk
                         current_chunk = []
                     header_detected = True
-                    accumulating_regular_text = False  # Reset this flag since we found a new header
-                    current_chunk.append(block)  # Start accumulating from this header
+                    accumulating_regular_text = (
+                        False  # Reset this flag since we found a new header
+                    )
+                    current_chunk.append(
+                        block
+                    )  # Start accumulating from this header
                     item_header_detected = False  # Reset this as we found a different type of header
-                elif is_regular_text and (header_detected or accumulating_regular_text):
+                elif is_regular_text and (
+                    header_detected or accumulating_regular_text
+                ):
                     current_chunk.append(block)
                     accumulating_regular_text = True
                     item_header_detected = False  # Regular text resets the "Item" header detection
                 else:
                     if accumulating_regular_text or item_header_detected:
-                        if any(block.text.strip() for block in current_chunk):  # Avoid emitting empty chunks
+                        if any(
+                            block.text.strip() for block in current_chunk
+                        ):  # Avoid emitting empty chunks
                             yield current_chunk
                         current_chunk = []
                         accumulating_regular_text = False
@@ -579,7 +714,9 @@ class HtmlDocument:
 
             # Check to yield the remaining chunk if it's the last block
             if i == len(self.blocks) - 1 and current_chunk:
-                if any(block.text.strip() for block in current_chunk):  # Avoid emitting empty chunks
+                if any(
+                    block.text.strip() for block in current_chunk
+                ):  # Avoid emitting empty chunks
                     yield current_chunk
 
 
@@ -588,60 +725,99 @@ def extract_and_format_content(element) -> List[Block]:
     Recursively extract and format content from an element,
     applying special formatting to tables and concatenating text for other elements.
     """
-    if element.name == 'table':
-        table_block = TableBlock(table_element=element, rows=len(element.find_all("tr")))
+    if element.name == "table":
+        table_block = TableBlock(
+            table_element=element, rows=len(element.find_all("tr"))
+        )
         return [table_block]
-    elif element.name in ['ul', 'ol']:
-        return [TextBlock(text=fixup(element.text), element=element.name, text_type='list')]
-    elif element.name in ["img", ]:
+    elif element.name in ["ul", "ol"]:
         return [
-                LinkBlock(text=str(element),
-                          tag=element.name,
-                          element=element.name, 
-                          alt=element.get('alt'),
-                          src=element.get('src'),
-                          text_type='string')
-                ]
+            TextBlock(
+                text=fixup(element.text),
+                element=element.name,
+                text_type="list",
+            )
+        ]
+    elif element.name in [
+        "img",
+    ]:
+        return [
+            LinkBlock(
+                text=str(element),
+                tag=element.name,
+                element=element.name,
+                alt=element.get("alt"),
+                src=element.get("src"),
+                text_type="string",
+            )
+        ]
+    elif isinstance(element, Comment):
+        # Skip HTML comments entirely so they don't pollute text output (e.g., "Field: Sequence" annotations)
+        return []
     elif isinstance(element, NavigableString):
-        return [TextBlock(text=fixup(element.string), element=None, text_type='string')]
+        return [
+            TextBlock(
+                text=fixup(element.string), element=None, text_type="string"
+            )
+        ]
     else:
         # First, merge consecutive text nodes within this element
         merge_consecutive_text_nodes(element)
-        
+
         inline = is_inline(element)
         blocks: List[Block] = []
         len_children = len(element.contents)
-                
+
         for index, child in enumerate(element.children):
+            # Skip HTML comments to avoid including annotation text like "Field: Sequence" in output
+            if isinstance(child, Comment):
+                continue
             if child.name:
                 blocks.extend(extract_and_format_content(child))
-                if not inline and len(blocks) > 0 and not isinstance(blocks[-1], TableBlock):
+                if (
+                    not inline
+                    and len(blocks) > 0
+                    and not isinstance(blocks[-1], TableBlock)
+                ):
                     # are we at the end of the children?
                     if not blocks[-1].inline or index == len_children - 1:
                         if blocks[-1].text.strip():
-                            blocks[-1].text += '\n'
+                            blocks[-1].text += "\n"
                         else:
-                            blocks[-1].text = '\n'
+                            blocks[-1].text = "\n"
             else:
                 stripped_string = replace_inline_newlines(child.string)
                 stripped_string = fixup(stripped_string)
-                
-                if not stripped_string.strip() and len(blocks) > 0 and not blocks[-1].get_text().strip():
-                    if not blocks[-1].get_text().endswith('\n'):  # Don't add a space after a new line
+
+                if (
+                    not stripped_string.strip()
+                    and len(blocks) > 0
+                    and not blocks[-1].get_text().strip()
+                ):
+                    if (
+                        not blocks[-1].get_text().endswith("\n")
+                    ):  # Don't add a space after a new line
                         blocks[-1].text += stripped_string
                 else:
-                    blocks.append(TextBlock(stripped_string, inline=inline, element=element.name, text_type='string'))
+                    blocks.append(
+                        TextBlock(
+                            stripped_string,
+                            inline=inline,
+                            element=element.name,
+                            text_type="string",
+                        )
+                    )
         return blocks
 
 
 def table_to_markdown(table_tag):
-    rows = table_tag.find_all('tr')
+    rows = table_tag.find_all("tr")
     col_widths = []
     col_has_content = []
 
     # Determine the maximum width for each column and identify empty columns
     for row in rows:
-        cols = row.find_all(['td', 'th'])
+        cols = row.find_all(["td", "th"])
         for i, col in enumerate(cols):
             width = len(col.get_text().strip())
             if len(col_widths) <= i:
@@ -653,26 +829,38 @@ def table_to_markdown(table_tag):
                     col_has_content[i] = True
 
     # Create a list of indices for columns that have content
-    content_col_indices = [i for i, has_content in enumerate(col_has_content) if has_content]
+    content_col_indices = [
+        i for i, has_content in enumerate(col_has_content) if has_content
+    ]
 
     # Adjust col_widths to only include columns with content
     col_widths = [col_widths[i] for i in content_col_indices]
 
     formatted_table = ""
     for index, row in enumerate(rows):
-        cols = row.find_all(['td', 'th'])
+        cols = row.find_all(["td", "th"])
         # Map cols to their new indices based on content_col_indices, then format
         row_text = []
         for i, col in enumerate(cols):
             if i in content_col_indices:  # Check if column should be included
-                new_index = content_col_indices.index(i)  # Get new index for col_widths
-                row_text.append(clean_column_text(col.get_text()).ljust(col_widths[new_index]))
+                new_index = content_col_indices.index(
+                    i
+                )  # Get new index for col_widths
+                row_text.append(
+                    clean_column_text(col.get_text()).ljust(
+                        col_widths[new_index]
+                    )
+                )
 
-        if any([text.strip() for text in row_text]):  # Skip entirely empty rows
-            formatted_row = ' | '.join(row_text)
-            formatted_table += formatted_row + '\n'
+        if any(
+            [text.strip() for text in row_text]
+        ):  # Skip entirely empty rows
+            formatted_row = " | ".join(row_text)
+            formatted_table += formatted_row + "\n"
             if index == 0:
-                formatted_table += '-+-'.join(['-' * len(text) for text in row_text]) + '\n'
+                formatted_table += (
+                    "-+-".join(["-" * len(text) for text in row_text]) + "\n"
+                )
 
     return formatted_table
 
@@ -688,26 +876,27 @@ def html_to_markdown(html: str) -> str:
 
 
 def decompose_toc_links(start_element: Tag):
-    regex = re.compile('Table [Oo]f [cC]ontents')
-    toc_tags = start_element.find_all('a', string=regex)
+    regex = re.compile("Table [Oo]f [cC]ontents")
+    toc_tags = start_element.find_all("a", string=regex)
     for toc_tag in toc_tags:
         toc_tag.decompose()
 
 
 def merge_consecutive_text_nodes(element):
     """Merge consecutive NavigableString children within an element."""
-    if not hasattr(element, 'contents'):
+    if not hasattr(element, "contents"):
         return
-        
+
     contents = list(element.contents)
     i = 0
     while i < len(contents) - 1:
         current = contents[i]
         next_item = contents[i + 1]
-        
+
         # Check if both are NavigableString instances
-        if (isinstance(current, NavigableString) and 
-            isinstance(next_item, NavigableString)):
+        if isinstance(current, NavigableString) and isinstance(
+            next_item, NavigableString
+        ):
             # Merge the text content
             merged_text = current.string + next_item.string
             # Replace current with merged text
@@ -720,53 +909,69 @@ def merge_consecutive_text_nodes(element):
         else:
             i += 1
 
+
 def merge_empty_div_elements(start_element: Tag):
     # Find all inline-block div elements with width style (used as spacers)
-    inline_divs = start_element.find_all('div', style=lambda x: x and 'display:inline-block' in x and 'width:' in x)
-    
+    inline_divs = start_element.find_all(
+        "div",
+        style=lambda x: x and "display:inline-block" in x and "width:" in x,
+    )
+
     # Iterate through all inline-block div elements
     for div in inline_divs:
         # Check if div content is empty or only contains &nbsp; or whitespace
         content = div.get_text().strip()
-        if not content or content == '\xa0' or content.isspace():
+        if not content or content == "\xa0" or content.isspace():
             # 使用NavigableString替换空的inline-block div
             div.replace_with(NavigableString(" "))
-    
+
     # Recursively merge text nodes in all elements
     return start_element
 
+
 def decompose_page_numbers(start_element: Tag):
     """Identify and remove consecutive page number tags, considering number sequence and format similarity"""
-    span_tags_with_numbers = start_element.find_all('span', string=re.compile(r'^\d{1,3}$'))
-    
+    span_tags_with_numbers = start_element.find_all(
+        "span", string=re.compile(r"^\d{1,3}$")
+    )
+
     def get_tag_style_signature(tag):
         """Extract tag style features for comparison"""
-        style = tag.get('style', '')
-        class_attr = ' '.join(tag.get('class', []))
-        parent_tag = tag.parent.name if tag.parent else ''
-        parent_class = ' '.join(tag.parent.get('class', [])) if tag.parent and hasattr(tag.parent, 'get') else ''
-        
+        style = tag.get("style", "")
+        class_attr = " ".join(tag.get("class", []))
+        parent_tag = tag.parent.name if tag.parent else ""
+        parent_class = (
+            " ".join(tag.parent.get("class", []))
+            if tag.parent and hasattr(tag.parent, "get")
+            else ""
+        )
+
         # Extract key style properties
-        font_family = ''
-        font_size = ''
-        font_weight = ''
-        color = ''
-        
+        font_family = ""
+        font_size = ""
+        font_weight = ""
+        color = ""
+
         if style:
-            font_family_match = re.search(r'font-family:([^;]+)', style)
-            font_size_match = re.search(r'font-size:([^;]+)', style)
-            font_weight_match = re.search(r'font-weight:([^;]+)', style)
-            color_match = re.search(r'color:([^;]+)', style)
-            
+            font_family_match = re.search(r"font-family:([^;]+)", style)
+            font_size_match = re.search(r"font-size:([^;]+)", style)
+            font_weight_match = re.search(r"font-weight:([^;]+)", style)
+            color_match = re.search(r"color:([^;]+)", style)
+
             if font_family_match:
-                font_family = font_family_match.group(1).strip().replace("'", "").replace('"', '')
+                font_family = (
+                    font_family_match.group(1)
+                    .strip()
+                    .replace("'", "")
+                    .replace('"', "")
+                )
             if font_size_match:
                 font_size = font_size_match.group(1).strip()
             if font_weight_match:
                 font_weight = font_weight_match.group(1).strip()
             if color_match:
                 color = color_match.group(1).strip()
-        
+
         # Create style signature
         signature = f"{font_family}|{font_size}|{font_weight}|{color}|{class_attr}|{parent_tag}|{parent_class}"
         return signature
@@ -783,7 +988,7 @@ def decompose_page_numbers(start_element: Tag):
             return False
         numbers.sort()
         for i in range(1, len(numbers)):
-            if numbers[i] != numbers[i-1] + 1:
+            if numbers[i] != numbers[i - 1] + 1:
                 return False
         return True
 
@@ -795,39 +1000,42 @@ def decompose_page_numbers(start_element: Tag):
             continue
         if not tag.text:
             continue
-            
+
         number = int(tag.text)
         tag_style_signature = get_tag_style_signature(tag)
-        
+
         if tag_style_signature not in style_groups:
             style_groups[tag_style_signature] = []
         style_groups[tag_style_signature].append((tag, number))
 
     # Analyze each style group to determine if it represents page numbers
     sequences_to_remove = []
-    
+
     for signature, tag_number_pairs in style_groups.items():
         if len(tag_number_pairs) < 2:
             continue  # Skip single tags
-            
+
         # Extract numbers and check if they form consecutive sequences
         numbers = [pair[1] for pair in tag_number_pairs]
-        
+
         # Check if this group contains consecutive page numbers
         if is_truly_consecutive(numbers):
             # This group appears to be page numbers, mark for removal
             tags_to_remove = [pair[0] for pair in tag_number_pairs]
             sequences_to_remove.extend(tags_to_remove)
- 
+
     # Remove identified page number tags
     for tag in sequences_to_remove:
         tag.decompose()
     return sequences_to_remove
 
 
-def get_text_between_tags(html: str, tag: str, ):
-    tag_start = f'<{tag}>'
-    tag_end = f'</{tag}>'
+def get_text_between_tags(
+    html: str,
+    tag: str,
+):
+    tag_start = f"<{tag}>"
+    tag_end = f"</{tag}>"
     is_header = False
     content = ""
 
@@ -844,7 +1052,9 @@ def get_text_between_tags(html: str, tag: str, ):
 
             # If within header lines, add to header_content
             elif is_header:
-                content += line + '\n'  # Add a newline to preserve original line breaks
+                content += (
+                    line + "\n"
+                )  # Add a newline to preserve original line breaks
     return content
 
 
@@ -852,17 +1062,84 @@ def is_inline(tag):
     # is is navigable string return False
     if not tag.name:
         return False
-    
+
     # Common inline elements
-    inline_elements = {'a', 'span', 'strong', 'em', 'b', 'i', 'u', 'small', 'font', 'big', 'sub', 'sup', 'img', 'label',
-                       'input', 'button', 'textarea', 'select', 'option', 'code', 'cite', 'abbr', 'acronym', 'tt', 'var',
-                       'kbd', 'samp', 'dfn', 'time', 'mark', 'data'}
+    inline_elements = {
+        "a",
+        "span",
+        "strong",
+        "em",
+        "b",
+        "i",
+        "u",
+        "small",
+        "font",
+        "big",
+        "sub",
+        "sup",
+        "img",
+        "label",
+        "input",
+        "button",
+        "textarea",
+        "select",
+        "option",
+        "code",
+        "cite",
+        "abbr",
+        "acronym",
+        "tt",
+        "var",
+        "kbd",
+        "samp",
+        "dfn",
+        "time",
+        "mark",
+        "data",
+    }
 
     # Common block elements
-    block_elements = {'div', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'dl', 'dt', 'dd', 'table', 
-                      'tr', 'td', 'th', 'thead', 'tbody', 'tfoot', 'caption', 'blockquote', 'pre', 'address', 'fieldset',
-                      'form', 'hr', 'article', 'aside', 'details', 'figcaption', 'figure', 'footer', 'header', 'main',
-                      'nav', 'section', 'summary'}
+    block_elements = {
+        "div",
+        "p",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "ul",
+        "ol",
+        "li",
+        "dl",
+        "dt",
+        "dd",
+        "table",
+        "tr",
+        "td",
+        "th",
+        "thead",
+        "tbody",
+        "tfoot",
+        "caption",
+        "blockquote",
+        "pre",
+        "address",
+        "fieldset",
+        "form",
+        "hr",
+        "article",
+        "aside",
+        "details",
+        "figcaption",
+        "figure",
+        "footer",
+        "header",
+        "main",
+        "nav",
+        "section",
+        "summary",
+    }
 
     # Check if the tag's name is in the list of inline elements
     if tag.name in inline_elements:
@@ -877,17 +1154,29 @@ def is_inline(tag):
         return True
 
     # Check for inline styling
-    if tag.has_attr('style'):
-        styles = tag['style'].split(';')
+    if tag.has_attr("style"):
+        styles = tag["style"].split(";")
         for style in styles:
-            if style.strip().lower().startswith('display'):
-                property_value = style.split(':')
+            if style.strip().lower().startswith("display"):
+                property_value = style.split(":")
                 if len(property_value) > 1:
                     display_value = property_value[1].strip().lower()
                     # Handle various display values
-                    if display_value in ['inline', 'inline-block', 'inline-flex', 'inline-grid']:
+                    if display_value in [
+                        "inline",
+                        "inline-block",
+                        "inline-flex",
+                        "inline-grid",
+                    ]:
                         return True
-                    elif display_value in ['block', 'flex', 'grid', 'table', 'table-row', 'table-cell']:
+                    elif display_value in [
+                        "block",
+                        "flex",
+                        "grid",
+                        "table",
+                        "table-row",
+                        "table-cell",
+                    ]:
                         return False
 
     # If we can't determine from the above checks, fall back to default behavior
@@ -898,16 +1187,15 @@ def fixup(text: str):
     # Replace HTML entity &nbsp; with regular spaces
     # Replace non-breaking spaces (\xa0) with regular spaces
     # Keep other whitespace as-is to preserve formatting
-    text = text.replace('\xa0', ' ')
+    text = text.replace("\xa0", " ")
     # Normalize multiple consecutive spaces to single space
-    text = re.sub(r' +', ' ', text)
-    
+    text = re.sub(r" +", " ", text)
+
     return text
 
 
 def get_clean_html(html: str) -> Optional[str]:
-    """Get a clean version of the html without the header tags, script and style tags, and table of content links.
-    """
+    """Get a clean version of the html without the header tags, script and style tags, and table of content links."""
     root = HtmlDocument.get_root(html)
 
     # If the root cannot be located it's not valid HTML
@@ -923,19 +1211,21 @@ def clean_html_root(root: Tag) -> Tag:
     """Clean the root element by removing header tags, script and style tags, and table of content links."""
     # Remove the header tags
     # specific_tag = root.find('ix:nonfraction', attrs={'unitref': 'shares', 'contextref': 'c-5','name': 'us-gaap:WeightedAverageNumberOfDilutedSharesOutstanding'})
-    
-    for tag in root.find_all('ix:header'):
+
+    for tag in root.find_all("ix:header"):
         tag.decompose()
 
     # Remove table of content links
     decompose_toc_links(root)
 
     # Remove script and style tags
-    for tag in root.find_all(['script', 'style']):
+    for tag in root.find_all(["script", "style"]):
         tag.decompose()
 
     # Remove comments
-    for comment in root.find_all(string=lambda text: isinstance(text, Comment)):
+    for comment in root.find_all(
+        string=lambda text: isinstance(text, Comment)
+    ):
         comment.extract()
 
     return root
@@ -943,7 +1233,7 @@ def clean_html_root(root: Tag) -> Tag:
 
 def replace_inline_newlines(text: str):
     """Replace newlines inside the text container"""
-    text = text.replace('\n', ' ')
+    text = text.replace("\n", " ")
     return text
 
 
@@ -954,23 +1244,39 @@ def fixup_soup(soup):
         comment.extract()
 
     # Find all pre tags
-    for pre in soup.find_all('pre'):
+    for pre in soup.find_all("pre"):
         # Check if there's a single div with all content
-        divs = pre.find_all('div', recursive=False)
+        divs = pre.find_all("div", recursive=False)
         if len(divs) == 1 and len(pre.contents) == 1:
             # If there's a single div, use it directly
             pre.replace_with(divs[0])
             continue
-            
+
         # Otherwise create a new div and preserve all content
         raw_content = str(pre)
-        content = raw_content.replace('<pre>', '').replace('</pre>', '')
-        new_soup = BeautifulSoup(f'<div>{content}</div>', 'html.parser')
+        content = raw_content.replace("<pre>", "").replace("</pre>", "")
+        new_soup = BeautifulSoup(f"<div>{content}</div>", "html.parser")
         pre.replace_with(new_soup.div)
 
 
 # List of words that are commonly not capitalized in titles
-common_words = {'and', 'or', 'but', 'the', 'a', 'an', 'in', 'with', 'for', 'on', 'at', 'to', 'of', 'by', 'as'}
+common_words = {
+    "and",
+    "or",
+    "but",
+    "the",
+    "a",
+    "an",
+    "in",
+    "with",
+    "for",
+    "on",
+    "at",
+    "to",
+    "of",
+    "by",
+    "as",
+}
 
 
 class SECLine:
@@ -998,14 +1304,14 @@ class SECLine:
 
     def set_features(self):
         # Additional features can be added here
-        self.features['word_count'] = len(self.text.split())
-        self.features['upper_case'] = self.text.isupper()
-        self.features['title_case'] = self.text.istitle()
+        self.features["word_count"] = len(self.text.split())
+        self.features["upper_case"] = self.text.isupper()
+        self.features["title_case"] = self.text.istitle()
 
 
 def is_header(text: str):
     # Remove numerical prefix for enumeration, e.g., "1. ", "I. ", "(1) "
-    trimmed_text = re.sub(r'^(\d+\.|\w\.\s|\(\d+\)\s)', '', text)
+    trimmed_text = re.sub(r"^(\d+\.|\w\.\s|\(\d+\)\s)", "", text)
     if not trimmed_text:
         return False
 
@@ -1014,9 +1320,15 @@ def is_header(text: str):
 
     # Check if the line is mostly title case, ignoring common words and numerical prefixes
     if words:
-        title_case_words = [word for word in words if (word.istitle() or word.lower() in common_words)]
+        title_case_words = [
+            word
+            for word in words
+            if (word.istitle() or word.lower() in common_words)
+        ]
         upper_case_words = [word for word in words if word.isupper()]
-        mostly_title_case = len(title_case_words) / len(words) > 0.6  # Threshold for mostly title case
+        mostly_title_case = (
+            len(title_case_words) / len(words) > 0.6
+        )  # Threshold for mostly title case
         mostly_upper_case = len(upper_case_words) / len(words) > 0.6
 
         if mostly_title_case or mostly_upper_case:
@@ -1029,8 +1341,12 @@ class TextAnalysis:
         # Pre-compute and store these properties to avoid recalculating them for each method call
         words = TextAnalysis._get_alpha_words(text)
         self.num_words = len(words)
-        self.num_upper_case_words = len([word for word in words if word.isupper()])
-        self.num_title_case_words = len([word for word in words if word.istitle()])
+        self.num_upper_case_words = len(
+            [word for word in words if word.isupper()]
+        )
+        self.num_title_case_words = len(
+            [word for word in words if word.istitle()]
+        )
 
         # Show a preview of the text i.e. first 6 characters followed by ... if longer
         self._text = text[:6] + "..." if len(text) > 6 else text
@@ -1038,14 +1354,22 @@ class TextAnalysis:
     @staticmethod
     def _get_alpha_words(text):
         """Removes numerical prefixes and splits the text into alphabetic words."""
-        trimmed_text = re.sub(r'[^a-zA-Z0-9\s]+', '', text)
+        trimmed_text = re.sub(r"[^a-zA-Z0-9\s]+", "", text)
         return [word for word in trimmed_text.split() if word.isalpha()]
 
     @property
     def is_header(self):
         """Determines if the text is a header based on title or upper case predominance."""
-        mostly_title_case = (self.num_title_case_words / self.num_words > 0.6) if self.num_words > 0 else False
-        mostly_upper_case = (self.num_upper_case_words / self.num_words > 0.6) if self.num_words > 0 else False
+        mostly_title_case = (
+            (self.num_title_case_words / self.num_words > 0.6)
+            if self.num_words > 0
+            else False
+        )
+        mostly_upper_case = (
+            (self.num_upper_case_words / self.num_words > 0.6)
+            if self.num_words > 0
+            else False
+        )
         return mostly_title_case or mostly_upper_case
 
     @property
@@ -1067,34 +1391,41 @@ class TextAnalysis:
         # Show the first 8 characters of the text
         return f"Text Analysis: {self._text}"
 
+
 def clean_cell_text(col) -> str:
-    text = re.sub(r'<br\s*/?>', '\n', str(col))
-    text = re.sub(r'<[^>]+>', '', text)
-    lines = [' '.join(line.strip().split()) for line in text.split('\n') if line.strip()]
-    return '\n'.join(lines)
+    text = re.sub(r"<br\s*/?>", "\n", str(col))
+    text = re.sub(r"<[^>]+>", "", text)
+    lines = [
+        " ".join(line.strip().split())
+        for line in text.split("\n")
+        if line.strip()
+    ]
+    return "\n".join(lines)
 
 
 def process_row(row) -> List[Tuple[str, int, int]]:
     processed_cells = []
-    cells = row.find_all(['td', 'th'])
+    cells = row.find_all(["td", "th"])
     i = 0
     while i < len(cells):
         content = clean_cell_text(cells[i])
-        colspan = int(cells[i].get('colspan', 1))
-        rowspan = int(cells[i].get('rowspan', 1))
+        colspan = int(cells[i].get("colspan", 1))
+        rowspan = int(cells[i].get("rowspan", 1))
 
         # Check if this cell is just a $ sign and the next cell exists
-        if content == '$' and i + 1 < len(cells):
+        if content == "$" and i + 1 < len(cells):
             next_content = clean_cell_text(cells[i + 1])
-            content = f'${next_content}'
-            colspan += int(cells[i + 1].get('colspan', 1))
+            content = f"${next_content}"
+            colspan += int(cells[i + 1].get("colspan", 1))
             i += 1  # Skip the next cell as we've combined it
         # Check if this cell is empty and the next cell is numeric
         elif not content.strip() and i + 1 < len(cells):
             next_content = clean_cell_text(cells[i + 1])
-            if next_content.replace('.', '', 1).isdigit():  # Check if next cell is numeric
+            if next_content.replace(
+                ".", "", 1
+            ).isdigit():  # Check if next cell is numeric
                 content = next_content
-                colspan += int(cells[i + 1].get('colspan', 1))
+                colspan += int(cells[i + 1].get("colspan", 1))
                 i += 1  # Skip the next cell as we've combined it
 
         # Always add the cell, even if it's empty
@@ -1103,10 +1434,11 @@ def process_row(row) -> List[Tuple[str, int, int]]:
         i += 1
     return processed_cells
 
+
 def detect_header_rows(rows):
     header_rows = []
     for row in rows:
-        if row.find('th'):
+        if row.find("th"):
             header_rows.append(row)
         elif not header_rows:
             header_rows.append(row)  # Use first row as header if no <th> found
@@ -1120,11 +1452,13 @@ def merge_header_rows(header_rows):
     for row in header_rows:
         processed_row = []
         for content, colspan, _ in row:
-            lines = content.split('\n')
+            lines = content.split("\n")
             processed_row.append((lines, colspan))
         processed_headers.append(processed_row)
 
-    max_lines = max(len(lines) for row in processed_headers for lines, _ in row)
+    max_lines = max(
+        len(lines) for row in processed_headers for lines, _ in row
+    )
     merged_header = []
 
     for i in range(max_lines):
@@ -1134,24 +1468,27 @@ def merge_header_rows(header_rows):
                 if i < len(lines):
                     line.append((lines[i], colspan))
                 else:
-                    line.append(('', colspan))
+                    line.append(("", colspan))
         merged_header.append(line)
 
     # Ensure the first cell is not empty across all lines
     if all(not line[0][0] for line in merged_header):
         for line in merged_header:
-            line[0] = (' ', line[0][1])
+            line[0] = (" ", line[0][1])
 
     return merged_header
 
 
 def is_numeric_or_financial(value):
-    pattern = r'^[\$€£(-]?\s{0,2}\d'
+    pattern = r"^[\$€£(-]?\s{0,2}\d"
     return bool(re.match(pattern, value.strip()))
 
+
 def determine_column_justification(all_processed_rows):
-    max_cols = max(sum(colspan for _, colspan, _ in row) for row in all_processed_rows)
-    justifications = ['left'] * max_cols
+    max_cols = max(
+        sum(colspan for _, colspan, _ in row) for row in all_processed_rows
+    )
+    justifications = ["left"] * max_cols
     for col in range(max_cols):
         numeric_count = 0
         total_count = 0
@@ -1167,29 +1504,39 @@ def determine_column_justification(all_processed_rows):
                 col_index += colspan
         if numeric_count > 1 and numeric_count / total_count > 0.5:
             for i in range(col, min(col + colspan, max_cols)):
-                justifications[i] = 'right'
+                justifications[i] = "right"
     return justifications
 
 
 def table_to_text(table_tag):
     try:
-        rows = table_tag.find_all('tr')
+        rows = table_tag.find_all("tr")
         if not rows:
             return ""
 
         header_rows = detect_header_rows(rows)
 
         all_processed_rows = [process_row(row) for row in rows]
-        header_processed = all_processed_rows[:len(header_rows)]
-        data_processed = all_processed_rows[len(header_rows):]
+        header_processed = all_processed_rows[: len(header_rows)]
+        data_processed = all_processed_rows[len(header_rows) :]
 
         merged_header = merge_header_rows(header_processed)
 
         # Check if the header is entirely empty
-        header_is_empty = all(not content.strip() for header_line in merged_header for content, _ in header_line)
+        header_is_empty = all(
+            not content.strip()
+            for header_line in merged_header
+            for content, _ in header_line
+        )
 
         # Determine the maximum number of columns
-        max_cols = max((sum(colspan for _, colspan, _ in row) for row in all_processed_rows), default=0)
+        max_cols = max(
+            (
+                sum(colspan for _, colspan, _ in row)
+                for row in all_processed_rows
+            ),
+            default=0,
+        )
 
         # Initialize column widths and track non-empty columns
         col_widths = [0] * max_cols
@@ -1201,10 +1548,16 @@ def table_to_text(table_tag):
                 col_index = 0
                 for content, colspan in header_line:
                     if content.strip():
-                        content_width = max((len(line) for line in content.split('\n')), default=0)
+                        content_width = max(
+                            (len(line) for line in content.split("\n")),
+                            default=0,
+                        )
                         for i in range(colspan):
                             if col_index + i < max_cols:
-                                col_widths[col_index + i] = max(col_widths[col_index + i], content_width // max(colspan, 1))
+                                col_widths[col_index + i] = max(
+                                    col_widths[col_index + i],
+                                    content_width // max(colspan, 1),
+                                )
                                 non_empty_cols.add(col_index + i)
                     col_index += colspan
 
@@ -1213,15 +1566,22 @@ def table_to_text(table_tag):
             col_index = 0
             for content, colspan, _ in processed_row:
                 if content.strip():
-                    content_width = max((len(line) for line in content.split('\n')), default=0)
+                    content_width = max(
+                        (len(line) for line in content.split("\n")), default=0
+                    )
                     for i in range(colspan):
                         if col_index + i < max_cols:
-                            col_widths[col_index + i] = max(col_widths[col_index + i], content_width // max(colspan, 1))
+                            col_widths[col_index + i] = max(
+                                col_widths[col_index + i],
+                                content_width // max(colspan, 1),
+                            )
                             non_empty_cols.add(col_index + i)
                 col_index += colspan
 
         # Filter out empty columns
-        col_widths = [width for i, width in enumerate(col_widths) if i in non_empty_cols]
+        col_widths = [
+            width for i, width in enumerate(col_widths) if i in non_empty_cols
+        ]
 
         # If all columns are empty, return an empty string
         if not col_widths:
@@ -1229,7 +1589,11 @@ def table_to_text(table_tag):
 
         # Determine column justifications
         justifications = determine_column_justification(all_processed_rows)
-        justifications = [just for i, just in enumerate(justifications) if i in non_empty_cols]
+        justifications = [
+            just
+            for i, just in enumerate(justifications)
+            if i in non_empty_cols
+        ]
 
         # Render the table
         rendered_table = []
@@ -1241,45 +1605,71 @@ def table_to_text(table_tag):
                 col_index = 0
                 non_empty_cell_count = 0
                 for content, colspan in header_line:
-                    if any(col_index + i in non_empty_cols for i in range(colspan)):
-                        width = sum(col_widths[non_empty_cell_count:non_empty_cell_count + colspan]) + 3 * (colspan - 1)
+                    if any(
+                        col_index + i in non_empty_cols for i in range(colspan)
+                    ):
+                        width = sum(
+                            col_widths[
+                                non_empty_cell_count : non_empty_cell_count
+                                + colspan
+                            ]
+                        ) + 3 * (colspan - 1)
                         row_content.append(content.center(width))
                         non_empty_cell_count += colspan
                     col_index += colspan
-                rendered_table.append('   '.join(row_content))
+                rendered_table.append("   ".join(row_content))
 
             # Add separator line only if header is not empty
-            rendered_table.append('-' * (sum(col_widths) + 3 * (len(col_widths) - 1)))
+            rendered_table.append(
+                "-" * (sum(col_widths) + 3 * (len(col_widths) - 1))
+            )
 
         # Render data rows
         for processed_row in data_processed:
-            non_empty_contents = [content for content, _, _ in processed_row if content.strip()]
+            non_empty_contents = [
+                content for content, _, _ in processed_row if content.strip()
+            ]
             if not non_empty_contents:
                 continue  # Skip empty rows
 
-            row_lines = [''] * max((len(content.split('\n')) for content in non_empty_contents), default=1)
+            row_lines = [""] * max(
+                (len(content.split("\n")) for content in non_empty_contents),
+                default=1,
+            )
             for i in range(len(row_lines)):
                 col_index = 0
                 cell_contents = []
                 non_empty_cell_count = 0
                 for content, colspan, _ in processed_row:
-                    if any(col_index + i in non_empty_cols for i in range(colspan)):
-                        width = sum(col_widths[non_empty_cell_count:non_empty_cell_count + colspan]) + 3 * (colspan - 1)
-                        lines = content.split('\n')
+                    if any(
+                        col_index + i in non_empty_cols for i in range(colspan)
+                    ):
+                        width = sum(
+                            col_widths[
+                                non_empty_cell_count : non_empty_cell_count
+                                + colspan
+                            ]
+                        ) + 3 * (colspan - 1)
+                        lines = content.split("\n")
                         if i < len(lines):
-                            if justifications and non_empty_cell_count < len(justifications) and justifications[non_empty_cell_count] == 'right':
+                            if (
+                                justifications
+                                and non_empty_cell_count < len(justifications)
+                                and justifications[non_empty_cell_count]
+                                == "right"
+                            ):
                                 cell_contents.append(lines[i].rjust(width))
                             else:
                                 cell_contents.append(lines[i].ljust(width))
                         else:
-                            cell_contents.append(' ' * width)
+                            cell_contents.append(" " * width)
                         non_empty_cell_count += colspan
                     col_index += colspan
-                row_lines[i] = '   '.join(cell_contents)
+                row_lines[i] = "   ".join(cell_contents)
 
             rendered_table.extend(row_lines)
 
-        return '\n'.join(rendered_table)
+        return "\n".join(rendered_table)
 
     except Exception as e:
         # Log the error or handle it as appropriate for your use case

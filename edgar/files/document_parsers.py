@@ -1,3 +1,4 @@
+import re
 from typing import List, Dict, Optional, Any
 import logging
 from edgar.files.base_parser import BaseHtmlParser
@@ -5,6 +6,7 @@ from edgar.files.text_assemble import AssembleText
 from edgar.files.timeout_utils import monitor_performance
 # from edgar.files.extract_item_ai import extract_items_with_ai
 from edgar.files.extract_item_ai_all import extract_catalog_structure
+from edgar.files.extract_financial.get_financial import extract_financial_statement
 
 class ParsedHtml10K(BaseHtmlParser):
     @staticmethod
@@ -38,6 +40,12 @@ class ParsedHtml10K(BaseHtmlParser):
         link_info = self._extract_table_links_base(
             soup, use_part_detection=False
         )
+
+        if not link_info:
+            # Consider the case where only links exist in the table without page numbers
+            link_info = self._extract_table_links_base_no_pagenumber(
+                soup, use_part_detection=False
+            )
 
         # If no table is found or table is empty, try parsing from div containing TABLE OF CONTENTS
         if not link_info:
@@ -430,10 +438,16 @@ class ParsedHtml10K(BaseHtmlParser):
             1. Contain links
             2. Have a separate cell storing page numbers
         """
+        extract_res = extract_financial_statement(html_content)
+        financal_elements_content = ""
+        if extract_res.success:
+            financal_elements = extract_res.page_contents_elements
+            financal_elements_content = AssembleText.assemble_html_document(financal_elements)
+            html_content = str(extract_res.soup)
+
         index_table = self.extract_html_link_info(html_content)
         raw_item_links = self.extract_item_and_split(index_table)
         item_links = self.classify_items_to_parts(raw_item_links, structure)
-        
 
         if not item_links or (len(item_links) < 10 and form_type == "10-K"):
             # new_item_links = extract_items_with_ai(structure.structure, index_table)
@@ -474,9 +488,51 @@ class ParsedHtml10K(BaseHtmlParser):
                     result[part_name][item_name] = content
                 else:
                     result["extracted"][item_name] = content
-        
-        return result
+        if financal_elements_content:
+            result["part ii"]["item 8"] += financal_elements_content
 
+        if len(result.get("part ii", {}).get("item 8", "")) < 10000 and len(result.get("part iv", {}).get("item 15", "")) < 10000:
+            # 从以下两个模块中找出字符长度最长的模块，然后找出第一个能匹配到的字符
+            # "CONSOLIDATED FINANCIAL STATEMENTS"（不区分大小写），将从该匹配处开始的内容附加到 item 8 中
+            # 候选模块：result["extracted"]["signatures"], result["part iv"]["item 16"]
+            signature_text = ""
+            item16_text = ""
+            try:
+                signature_text = result.get("extracted", {}).get("signatures", "") or ""
+            except Exception:
+                signature_text = ""
+            try:
+                item16_text = result.get("part iv", {}).get("item 16", "") or ""
+            except Exception:
+                item16_text = ""
+        
+            # 选择较长文本并记录来源模块键
+            if len(item16_text) >= len(signature_text):
+                candidate_text = item16_text
+                candidate_key = ("part iv", "item 16")
+            else:
+                candidate_text = signature_text
+                candidate_key = ("extracted", "signatures")
+            # result["extracted"]["signature"]
+            if candidate_text:
+                match = re.search(r"CONSOLIDATED\s+FINANCIAL\s+STATEMENTS", candidate_text, re.IGNORECASE)
+                if match:
+                    # 被拆分的数据：上半部分（匹配之前）填充回原本的模块，下半部分（从匹配开始）附加到 item 8
+                    before = candidate_text[:match.start()]
+                    tail = candidate_text[match.start():]
+        
+                    # 为避免附加过多内容，尝试在下一个可能的章节标题处截断尾部
+                    stop = re.search(r"\n\s*(SIGNATURES|ITEM\s+\d+|EXHIBITS?)\b", tail, re.IGNORECASE)
+                    if stop:
+                        tail = tail[:stop.start()]
+        
+                    # 上半部分填充回原本的模块（覆盖原模块内容为匹配前文本）
+                    result.setdefault(candidate_key[0], {})[candidate_key[1]] = (before or "").strip()
+        
+                    # 下半部分附加到 item 8
+                    result.setdefault("part ii", {}).setdefault("item 8", "")
+                    result["part ii"]["item 8"] += "\n" + tail.strip()
+        return result
 
 
 class ParsedHtml10Q(BaseHtmlParser):

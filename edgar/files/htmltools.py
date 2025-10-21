@@ -598,3 +598,26 @@ class ChunkedDocument:
         return repr_rich(self.__rich__())
 
 
+@lru_cache(maxsize=8)
+def chunk_with_split(html: str):
+    financial_elements, document = HtmlDocument.from_html_split_financial(html)
+    return financial_elements, list(document.generate_chunks())
+
+
+class ChunkedDocumentSplitFinancial(ChunkedDocument):
+    def __init__(self,
+                 html: str,
+                 chunk_fn: Callable[[List], pd.DataFrame] = chunks2df,
+                 prefix_src: str = ""):
+        self.financial_elements, self.chunks = chunk_with_split(html)
+        self._chunked_data = chunk_fn(self.chunks)
+        self.chunk_fn = chunk_fn
+        self.prefix_src = prefix_src
+        self.document_id_parse:Dict = {}
+
+    def assemble_financial_content(self, markdown:bool=False):
+        # if markdown:
+        #     return "".join([text for text in self.assemble_block_markdown(self.financial_elements)])
+        # else:
+        #     return "".join([text for text in self.assemble_block_text(self.financial_elements)])
+        return "".join([text for text in self.assemble_block_text(self.financial_elements)])
