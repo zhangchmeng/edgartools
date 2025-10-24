@@ -1,5 +1,5 @@
 import re
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
 import logging
 from edgar.files.base_parser import BaseHtmlParser
 from edgar.files.text_assemble import AssembleText
@@ -7,6 +7,84 @@ from edgar.files.timeout_utils import monitor_performance
 # from edgar.files.extract_item_ai import extract_items_with_ai
 from edgar.files.extract_item_ai_all import extract_catalog_structure
 from edgar.files.extract_financial.get_financial import extract_financial_statement
+
+
+def group_items_by_structure(item_result: Dict[Any, str], structure) -> Tuple[Dict[str, Dict[str, str]], Dict[str, str]]:
+    """
+    将解析出的 item_result 按照给定的 structure 进行严格对齐，并实现通用的子项（如 item 7A、10B 等）合并到母项逻辑。
+    - 如果条目（忽略结尾标点）不在结构中、但其基础母项存在（例如 item 7A -> item 7），则合并追加到母项。
+    - 若条目在结构中，则严格路由到对应的 Part；否则落入 extracted。
+    返回值：
+      - result: {part: {item: content}, 'extracted': {...}}
+      - item_to_part: 结构中条目到所在 part 的映射（全部小写）
+    """
+    # 预先构建从条目名称到所属 Part 的映射，以及结构中的条目集合（全部小写）
+    item_to_part: Dict[str, str] = {}
+    structure_items_set = set()
+    norm_structure_items_set = set()
+    for part_name in structure.structure:
+        part_items = structure.get_part(part_name)
+        for part_item_name in part_items:
+            lower_name = part_item_name.lower()
+            item_to_part[lower_name] = part_name.lower()
+            structure_items_set.add(lower_name)
+            # 规范化名称以消除末尾标点差异（如 'item 1.' -> 'item 1'）
+            normalized = re.sub(r'[\.:;]\s*$', '', lower_name).strip()
+            norm_structure_items_set.add(normalized)
+
+    # 初始化结果结构
+    result: Dict[str, Dict[str, str]] = {part_name.lower(): {} for part_name in structure.structure}
+    result["extracted"] = {}
+
+    # 遍历 item_result 并路由内容
+    for key, content in item_result.items():
+        if isinstance(key, tuple) and len(key) == 2:
+            # ('part i', 'Item X')：不使用传入的 part 名称，始终以结构定义进行路由
+            _, item_name = key
+            item_name = item_name.lower()
+            normalized_item = re.sub(r'[\.:;]\s*$', '', item_name).strip()
+            base_match = re.match(r'^(item\s+\d+)\s*[a-z]\b', normalized_item)
+            base_item = base_match.group(1) if base_match else None
+
+            # 通用子项合并：子项不在结构中、但基础母项存在 -> 合并到母项
+            if base_item and (normalized_item not in structure_items_set) and (normalized_item not in norm_structure_items_set) and (re.sub(r'[\.:;]\s*$', '', base_item) in norm_structure_items_set):
+                target_base = re.sub(r'[\.:;]\s*$', '', base_item)
+                target_part = item_to_part.get(target_base)
+                if target_part and target_part in result:
+                    result[target_part].setdefault(target_base, "")
+                    result[target_part][target_base] += content
+                else:
+                    result["extracted"].setdefault(target_base, "")
+                    result["extracted"][target_base] += content
+            else:
+                expected_part = item_to_part.get(normalized_item)
+                if expected_part and expected_part in result:
+                    result[expected_part][normalized_item] = content
+                else:
+                    result["extracted"][normalized_item] = content
+        else:
+            # 'Item X' 或其他字符串键
+            item_name = str(key).lower()
+            normalized_item = re.sub(r'[\.:;]\s*$', '', item_name).strip()
+            base_match = re.match(r'^(item\s+\d+)\s*[a-z]\b', normalized_item)
+            base_item = base_match.group(1) if base_match else None
+            if base_item and (normalized_item not in structure_items_set) and (normalized_item not in norm_structure_items_set) and (re.sub(r'[\.:;]\s*$', '', base_item) in norm_structure_items_set):
+                target_base = re.sub(r'[\.:;]\s*$', '', base_item)
+                target_part = item_to_part.get(target_base)
+                if target_part and target_part in result:
+                    result[target_part].setdefault(target_base, "")
+                    result[target_part][target_base] += content
+                else:
+                    result["extracted"].setdefault(target_base, "")
+                    result["extracted"][target_base] += content
+                continue
+            expected_part = item_to_part.get(normalized_item)
+            if expected_part and expected_part in result:
+                result[expected_part][normalized_item] = content
+            else:
+                result["extracted"][normalized_item] = content
+
+    return result, item_to_part
 
 class ParsedHtml10K(BaseHtmlParser):
     @staticmethod
@@ -94,7 +172,9 @@ class ParsedHtml10K(BaseHtmlParser):
         """
         if not link_info:
             return []
+        
         link_info = [item for sublist in link_info for item in sublist]
+
         items_match_1 = {  # Match items starting with these patterns
             "Item 1": "Item 1.",
             "Item 1A": "Item 1A.",
@@ -430,20 +510,18 @@ class ParsedHtml10K(BaseHtmlParser):
         )
         return result
 
+
     def extract_html(
         self, html_content: str, structure, markdown: bool = False, form_type: str = "10-K"
     ) -> Dict[str, Any]:
-        """
-        Find rows in tables that:
-            1. Contain links
-            2. Have a separate cell storing page numbers
-        """
         extract_res = extract_financial_statement(html_content)
         financal_elements_content = ""
         if extract_res.success:
             financal_elements = extract_res.page_contents_elements
             financal_elements_content = AssembleText.assemble_html_document(financal_elements)
-            html_content = str(extract_res.soup)
+            soup_obj = extract_res.soup
+            if soup_obj is not None and len(soup_obj.get_text()) > 20000:
+                html_content = str(soup_obj)
 
         index_table = self.extract_html_link_info(html_content)
         raw_item_links = self.extract_item_and_split(index_table)
@@ -459,39 +537,15 @@ class ParsedHtml10K(BaseHtmlParser):
             html_content, item_links, markdown=markdown
         )
         
-        # Step 4: Group items by part based on new item_result structure
-        result = {part_name.lower(): {} for part_name in structure.structure}
-        result["extracted"] = {}
+        # 使用通用结构化分发函数，将条目严格对齐到 structure，并执行子项合并
+        result, item_to_part = group_items_by_structure(item_result, structure)
 
-        for key, content in item_result.items():
-            if isinstance(key, tuple) and len(key) == 2:
-                # Handle tuple format: ('part i', 'Item 1')
-                part_name, item_name = key
-                part_name = part_name.lower()
-                item_name = item_name.lower()
-                if part_name in result:
-                    result[part_name][item_name] = content
-                else:
-                    result["extracted"][item_name] = content
-            else:
-                # Handle string format: 'Item 0', 'Signature'
-                item_name = str(key).lower()
-                # Try to find which part this item belongs to
-                item_to_part = {}
-                for part_name in structure.structure:
-                    part_items = structure.get_part(part_name)
-                    for part_item_name in part_items:
-                        item_to_part[part_item_name.lower()] = part_name.lower()
-                
-                part_name = item_to_part.get(item_name)
-                if part_name:
-                    result[part_name][item_name] = content
-                else:
-                    result["extracted"][item_name] = content
         if financal_elements_content:
+            result.setdefault("part ii", {}).setdefault("item 8", "")
             result["part ii"]["item 8"] += financal_elements_content
 
-        if len(result.get("part ii", {}).get("item 8", "")) < 10000 and len(result.get("part iv", {}).get("item 15", "")) < 10000:
+        # if len(result.get("part ii", {}).get("item 8", "")) < 20000 and len(result.get("part iv", {}).get("item 15", "")) < 20000:
+        if len(result.get("part iv", {}).get("item 16", "")) > 10000 or len(result.get("extracted", {}).get("signatures", "")) > 10000:
             # 从以下两个模块中找出字符长度最长的模块，然后找出第一个能匹配到的字符
             # "CONSOLIDATED FINANCIAL STATEMENTS"（不区分大小写），将从该匹配处开始的内容附加到 item 8 中
             # 候选模块：result["extracted"]["signatures"], result["part iv"]["item 16"]
@@ -522,9 +576,9 @@ class ParsedHtml10K(BaseHtmlParser):
                     tail = candidate_text[match.start():]
         
                     # 为避免附加过多内容，尝试在下一个可能的章节标题处截断尾部
-                    stop = re.search(r"\n\s*(SIGNATURES|ITEM\s+\d+|EXHIBITS?)\b", tail, re.IGNORECASE)
-                    if stop:
-                        tail = tail[:stop.start()]
+                    # stop = re.search(r"\n\s*(SIGNATURES|ITEM\s+\d+|EXHIBITS?)\b", tail, re.IGNORECASE)
+                    # if stop:
+                    #     tail = tail[:stop.start()]
         
                     # 上半部分填充回原本的模块（覆盖原模块内容为匹配前文本）
                     result.setdefault(candidate_key[0], {})[candidate_key[1]] = (before or "").strip()
@@ -533,7 +587,6 @@ class ParsedHtml10K(BaseHtmlParser):
                     result.setdefault("part ii", {}).setdefault("item 8", "")
                     result["part ii"]["item 8"] += "\n" + tail.strip()
         return result
-
 
 class ParsedHtml10Q(BaseHtmlParser):
     """Parser for 10-Q HTML documents that handles same item numbers in different parts."""
@@ -586,7 +639,7 @@ class ParsedHtml10Q(BaseHtmlParser):
         """Extract and match 10-Q specific items, handling same item numbers in different parts."""
         if not link_info:
             return []
-
+        
         link_info = [item for sublist in link_info for item in sublist]
 
         # 10-Q specific item patterns
@@ -785,14 +838,457 @@ class ParsedHtml10Q(BaseHtmlParser):
         item_result = AssembleText.assemble_items(
             html_content, item_links, markdown=markdown
         )
-        # Group items by part
-        result = {"part i": {}, "part ii": {}, "extracted": {}}
+        
+        # 使用通用结构化分发函数，将条目严格对齐到 structure，并执行子项合并
+        result, _item_to_part = group_items_by_structure(item_result, structure)
+        return result
 
-        for item_name, content in item_result.items():
-            if isinstance(item_name, tuple):
-                part_name, item_name = item_name
-                result[part_name][item_name.lower()] = content
+
+class ParsedHtml20F(ParsedHtml10K):
+
+    @staticmethod
+    @monitor_performance
+    def extract_item_and_split(link_info: List[List[Dict[str, Any]]]):
+        """
+        Optimized version: Handles same item appearing in multiple sections/blocks.
+
+        Defines matching patterns and functions for extracting and splitting SEC filing items.
+        The code provides:
+        1. Multiple dictionaries containing different formats of SEC item identifiers
+        2. A match_function_map tuple that pairs each dictionary with its corresponding matching function
+        3. Matching functions that handle case-insensitive comparisons (startswith, equals, contains)
+
+        Key improvement: Instead of keeping only the first match for each item, this version
+        collects ALL matching links for each item to support merging multiple sections.
+        """
+        
+        if not link_info:
+            return []
+            
+        link_info = [item for sublist in link_info for item in sublist]
+
+        items_match_1 = {  # Match items starting with these patterns (20-F)
+            "Item 1": "Item 1.",
+            "Item 2": "Item 2.",
+            "Item 3": "Item 3.",
+            "Item 4": "Item 4.",
+            "Item 4A": "Item 4A.",
+            "Item 5": "Item 5.",
+            "Item 6": "Item 6.",
+            "Item 7": "Item 7.",
+            "Item 8": "Item 8.",
+            "Item 9": "Item 9.",
+            "Item 10": "Item 10.",
+            "Item 11": "Item 11.",
+            "Item 12": "Item 12.",
+            "Item 13": "Item 13.",
+            "Item 14": "Item 14.",
+            "Item 15": "Item 15.",
+            "Item 16A": "Item 16A.",
+            "Item 16B": "Item 16B.",
+            "Item 16C": "Item 16C.",
+            "Item 16D": "Item 16D.",
+            "Item 16E": "Item 16E.",
+            "Item 16F": "Item 16F.",
+            "Item 16G": "Item 16G.",
+            "Item 16H": "Item 16H.",
+            "Item 16I": "Item 16I.",
+            "Item 16J": "Item 16J.",
+            "Item 17": "Item 17.",
+            "Item 18": "Item 18.",
+            "Item 19": "Item 19.",
+            "Signatures": "Signature",
+        }
+        items_match_0 = {key: key for key in items_match_1}
+        items_match_2 = {  # Exact match after stripping whitespace (20-F)
+            "Item 1": "Part I, Item 1",
+            "Item 2": "Part I, Item 2",
+            "Item 3": "Part I, Item 3",
+            "Item 4": "Part I, Item 4",
+            "Item 4A": "Part I, Item 4A",
+            "Item 5": "Part I, Item 5",
+            "Item 6": "Part I, Item 6",
+            "Item 7": "Part I, Item 7",
+            "Item 8": "Part I, Item 8",
+            "Item 9": "Part I, Item 9",
+            "Item 10": "Part I, Item 10",
+            "Item 11": "Part I, Item 11",
+            "Item 12": "Part I, Item 12",
+            "Item 13": "Part II, Item 13",
+            "Item 14": "Part II, Item 14",
+            "Item 15": "Part II, Item 15",
+            "Item 16A": "Part II, Item 16A",
+            "Item 16B": "Part II, Item 16B",
+            "Item 16C": "Part II, Item 16C",
+            "Item 16D": "Part II, Item 16D",
+            "Item 16E": "Part II, Item 16E",
+            "Item 16F": "Part II, Item 16F",
+            "Item 16G": "Part II, Item 16G",
+            "Item 16H": "Part II, Item 16H",
+            "Item 16I": "Part II, Item 16I",
+            "Item 16J": "Part II, Item 16J",
+            "Item 17": "Part III, Item 17",
+            "Item 18": "Part III, Item 18",
+            "Item 19": "Part III, Item 19",
+            "Signatures": "Signature",
+        }
+        items_match_2_1 = {  # Item No. format (20-F)
+            "Item 1": "Item No. 1",
+            "Item 2": "Item No. 2",
+            "Item 3": "Item No. 3",
+            "Item 4": "Item No. 4",
+            "Item 4A": "Item No. 4A",
+            "Item 5": "Item No. 5",
+            "Item 6": "Item No. 6",
+            "Item 7": "Item No. 7",
+            "Item 8": "Item No. 8",
+            "Item 9": "Item No. 9",
+            "Item 10": "Item No. 10",
+            "Item 11": "Item No. 11",
+            "Item 12": "Item No. 12",
+            "Item 13": "Item No. 13",
+            "Item 14": "Item No. 14",
+            "Item 15": "Item No. 15",
+            "Item 16A": "Item No. 16A",
+            "Item 16B": "Item No. 16B",
+            "Item 16C": "Item No. 16C",
+            "Item 16D": "Item No. 16D",
+            "Item 16E": "Item No. 16E",
+            "Item 16F": "Item No. 16F",
+            "Item 16G": "Item No. 16G",
+            "Item 16H": "Item No. 16H",
+            "Item 16I": "Item No. 16I",
+            "Item 16J": "Item No. 16J",
+            "Item 17": "Item No. 17",
+            "Item 18": "Item No. 18",
+            "Item 19": "Item No. 19",
+        }
+        items_match_2_2 = {  # Exact match after stripping whitespace (20-F)
+            "Item 1": "Part I. Item 1",
+            "Item 2": "Part I. Item 2",
+            "Item 3": "Part I. Item 3",
+            "Item 4": "Part I. Item 4",
+            "Item 4A": "Part I. Item 4A",
+            "Item 5": "Part I. Item 5",
+            "Item 6": "Part I. Item 6",
+            "Item 7": "Part I. Item 7",
+            "Item 8": "Part I. Item 8",
+            "Item 9": "Part I. Item 9",
+            "Item 10": "Part I. Item 10",
+            "Item 11": "Part I. Item 11",
+            "Item 12": "Part I. Item 12",
+            "Item 13": "Part II. Item 13",
+            "Item 14": "Part II. Item 14",
+            "Item 15": "Part II. Item 15",
+            "Item 16A": "Part II. Item 16A",
+            "Item 16B": "Part II. Item 16B",
+            "Item 16C": "Part II. Item 16C",
+            "Item 16D": "Part II. Item 16D",
+            "Item 16E": "Part II. Item 16E",
+            "Item 16F": "Part II. Item 16F",
+            "Item 16G": "Part II. Item 16G",
+            "Item 16H": "Part II. Item 16H",
+            "Item 16I": "Part II. Item 16I",
+            "Item 16J": "Part II. Item 16J",
+            "Item 17": "Part III. Item 17",
+            "Item 18": "Part III. Item 18",
+            "Item 19": "Part III. Item 19",
+            "Signatures": "Signature",
+        }
+        items_match_2_3 = {  # Exact match after stripping whitespace (20-F)
+            "Item 1": "Part I. Item 1.",
+            "Item 2": "Part I. Item 2.",
+            "Item 3": "Part I. Item 3.",
+            "Item 4": "Part I. Item 4.",
+            "Item 4A": "Part I. Item 4A.",
+            "Item 5": "Part I. Item 5.",
+            "Item 6": "Part I. Item 6.",
+            "Item 7": "Part I. Item 7.",
+            "Item 8": "Part I. Item 8.",
+            "Item 9": "Part I. Item 9.",
+            "Item 10": "Part I. Item 10.",
+            "Item 11": "Part I. Item 11.",
+            "Item 12": "Part I. Item 12.",
+            "Item 13": "Part II. Item 13.",
+            "Item 14": "Part II. Item 14.",
+            "Item 15": "Part II. Item 15.",
+            "Item 16A": "Part II. Item 16A.",
+            "Item 16B": "Part II. Item 16B.",
+            "Item 16C": "Part II. Item 16C.",
+            "Item 16D": "Part II. Item 16D.",
+            "Item 16E": "Part II. Item 16E.",
+            "Item 16F": "Part II. Item 16F.",
+            "Item 16G": "Part II. Item 16G.",
+            "Item 16H": "Part II. Item 16H.",
+            "Item 16I": "Part II. Item 16I.",
+            "Item 16J": "Part II. Item 16J.",
+            "Item 17": "Part III. Item 17.",
+            "Item 18": "Part III. Item 18.",
+            "Item 19": "Part III. Item 19.",
+            "Signatures": "Signature",
+        }
+
+        items_match_3 = {  # Exact match after stripping whitespace (20-F)
+            "Item 1": "Identity of Directors, Senior Management and Advisers",
+            "Item 2": "Offer Statistics and Expected Timetable",
+            "Item 3": "Key Information",
+            "Item 4": "Information on the Company",
+            "Item 4A": "Unresolved Staff Comments",
+            "Item 5": "Operating and Financial Review and Prospects",
+            "Item 6": "Directors, Senior Management and Employees",
+            "Item 7": "Major Shareholders and Related Party Transactions",
+            "Item 8": "Financial Information",
+            "Item 9": "The Offer and Listing",
+            "Item 10": "Additional Information",
+            "Item 11": "Quantitative and Qualitative Disclosures About Market Risk",
+            "Item 12": "Description of Securities Other Than Equity Securities",
+            "Item 13": "Defaults, Dividend Arrearages and Delinquencies",
+            "Item 14": "Material Modifications to the Rights of Security Holders and Use of Proceeds",
+            "Item 15": "Controls and Procedures",
+            "Item 16A": "Audit Committee Financial Expert",
+            "Item 16B": "Code of Ethics",
+            "Item 16C": "Principal Accountant Fees and Services",
+            "Item 16D": "Exemptions from the Listing Standards for Audit Committees",
+            "Item 16E": "Purchases of Equity Securities by the Issuer and Affiliated Purchasers",
+            "Item 16F": "Change in Registrant's Certifying Accountant",
+            "Item 16G": "Mine Safety Disclosure",
+            "Item 16H": "Disclosure Regarding Foreign Jurisdictions That Prevent Inspections",
+            "Item 16I": "Insider Trading Policies",
+            "Item 16J": "Cybersecurity",
+            "Item 17": "Financial Statements",
+            "Item 18": "Financial Statements",
+            "Item 19": "Exhibits",
+            "Signatures": "Signatures",
+        }
+
+        items_match_4 = {  # Match combined items (startswith comparison)
+            "Item 1": "Items 1 and 2.",
+            "Item 2": "Items 1 and 2.",
+        }
+
+        items_match_5 = {  # 20-F numbered format
+            "Item 1": "1. Identity of Directors, Senior Management and Advisers",
+            "Item 2": "2. Offer Statistics and Expected Timetable",
+            "Item 3": "3. Key Information",
+            "Item 4": "4. Information on the Company",
+            "Item 4A": "4A. Unresolved Staff Comments",
+            "Item 5": "5. Operating and Financial Review and Prospects",
+            "Item 6": "6. Directors, Senior Management and Employees",
+            "Item 7": "7. Major Shareholders and Related Party Transactions",
+            "Item 8": "8. Financial Information",
+            "Item 9": "9. The Offer and Listing",
+            "Item 10": "10. Additional Information",
+            "Item 11": "11. Quantitative and Qualitative Disclosures About Market Risk",
+            "Item 12": "12. Description of Securities Other Than Equity Securities",
+            "Item 13": "13. Defaults, Dividend Arrearages and Delinquencies",
+            "Item 14": "14. Material Modifications to the Rights of Security Holders and Use of Proceeds",
+            "Item 15": "15. Controls and Procedures",
+            "Item 16A": "16A. Audit Committee Financial Expert",
+            "Item 16B": "16B. Code of Ethics",
+            "Item 16C": "16C. Principal Accountant Fees and Services",
+            "Item 16D": "16D. Exemptions from the Listing Standards for Audit Committees",
+            "Item 16E": "16E. Purchases of Equity Securities by the Issuer and Affiliated Purchasers",
+            "Item 16F": "16F. Change in Registrant's Certifying Accountant",
+            "Item 16G": "16G. Mine Safety Disclosure",
+            "Item 16H": "16H. Disclosure Regarding Foreign Jurisdictions That Prevent Inspections",
+            "Item 16I": "16I. Insider Trading Policies",
+            "Item 16J": "16J. Cybersecurity",
+            "Item 17": "17. Financial Statements",
+            "Item 18": "18. Financial Statements",
+            "Item 19": "19. Exhibits",
+        }
+
+        items_match_6 = {
+            "Item 1": "1 and 2. Business and Properties",
+            "Item 2": "1 and 2. Business and Properties",
+        }
+
+        # Matching function types:
+        # 1. equal
+        # 2. startswith
+        # 3. contains
+        # 4. regex
+        match_function_map = [  # The current page has an order
+            (
+                items_match_4,
+                lambda x, y: x.strip().lower().startswith(y.lower()),
+            ),
+            (
+                items_match_6,
+                lambda x, y: x.strip().lower().startswith(y.lower()),
+            ),
+            (items_match_0, lambda x, y: x.strip().lower() == y.lower()),
+            (
+                items_match_1,
+                lambda x, y: x.strip().lower().startswith(y.lower()),
+            ),
+            (items_match_2, lambda x, y: x.strip().lower() == y.lower()),
+            (items_match_2_1, lambda x, y: x.strip().lower() == y.lower()),
+            (items_match_2_2, lambda x, y: x.strip().lower() == y.lower()),
+            (items_match_2_3, lambda x, y: x.strip().lower() == y.lower()),
+            (items_match_3, lambda x, y: y.lower() in x.lower()),
+            (items_match_5, lambda x, y: y.lower() in x.lower()),
+        ]
+
+        # Process matches and collect ALL links for each item (support multiple sections)
+        item_links_dict = {}  # item_name -> list of links
+        multi_section_items = set()  # Track items with multiple sections
+
+        # Record items that have been processed to avoid duplicate matching
+        processed_items = set()
+
+        for match_map, match_function in match_function_map:
+            # Stop processing further maps if we've collected 15 or more items
+            if len(item_links_dict) >= 15:
+                break
+            for item_name, match_text in match_map.items():
+                # If item has been processed, skip subsequent matching
+                if item_name in processed_items:
+                    continue
+
+                for one_table_link in link_info:
+                    for cell in one_table_link["text"]:
+                        if match_function(cell, match_text):
+                            # Handle both old format (single "link") and new format (multiple "links")
+                            if "links" in one_table_link:
+                                # New format: multiple links per row
+                                links_to_add = one_table_link["links"]
+                                is_multi_section = one_table_link.get(
+                                    "is_multi_section", False
+                                )
+
+                                # Log detection of multi-section items
+                                if is_multi_section and len(links_to_add) > 1:
+                                    logging.info(
+                                        f"Processing multi-section item: {item_name} with {len(links_to_add)} sections"
+                                    )
+                            else:
+                                # Backward compatibility: single link format
+                                links_to_add = [one_table_link["link"]]
+                                is_multi_section = False
+
+                            # Collect ALL matching links for each item
+                            if item_name not in item_links_dict:
+                                item_links_dict[item_name] = []
+
+                            # Add all links, avoiding duplicates
+                            for link in links_to_add:
+                                if link not in item_links_dict[item_name]:
+                                    item_links_dict[item_name].append(link)
+
+                            # Track multi-section items
+                            if is_multi_section:
+                                multi_section_items.add(item_name)
+
+                            # Add processed item to processed_items set
+                            processed_items.add(item_name)
+
+                            break  # Break after first match in this cell
+        # Convert to list format: [(item_name, [link1, link2, ...]), ...]
+        item_links = [(name, links) for name, links in item_links_dict.items()]
+
+        # Log summary of processing results
+        multi_section_count = sum(
+            1 for name, links in item_links if len(links) > 1
+        )
+        single_section_count = len(item_links) - multi_section_count
+
+        logging.info(
+            f"Item processing summary: {single_section_count} single-section items, {multi_section_count} multi-section items"
+        )
+
+        return item_links
+
+
+    def extract_html(
+        self, html_content: str, structure, markdown: bool = False, form_type: str = "10-K"
+    ) -> Dict[str, Any]:
+        extract_res = extract_financial_statement(html_content)
+        financal_elements_content = ""
+        if extract_res.success:
+            financal_elements = extract_res.page_contents_elements
+            financal_elements_content = AssembleText.assemble_html_document(financal_elements)
+            if len(extract_res.soup.get_text()) > 20000:
+                html_content = str(extract_res.soup)
+
+        index_table = self.extract_html_link_info(html_content)
+        raw_item_links = self.extract_item_and_split(index_table)
+        item_links = self.classify_items_to_parts(raw_item_links, structure)
+
+        if not item_links or (len(item_links) < 15 and form_type == "20-F"):
+            # new_item_links = extract_items_with_ai(structure.structure, index_table)
+            new_item_links = extract_catalog_structure(html_content, structure.structure, form_type)
+            if new_item_links:
+                item_links = new_item_links
+
+        item_result = AssembleText.assemble_items(
+            html_content, item_links, markdown=markdown
+        )
+        
+        # 使用通用结构化分发函数，将条目严格对齐到 structure，并执行子项合并
+        result, item_to_part = group_items_by_structure(item_result, structure)
+
+        # 选择将财务元素附加到 part iii 的条目，要求与 structure 保持一致
+        part = result.setdefault("part iii", {})
+        allowed_items_part_iii = {name for name, p in item_to_part.items() if p == "part iii"}
+        item17_val = part.get("item 17", "") or ""
+        item18_val = part.get("item 18", "") or ""
+        candidates = ["item 17", "item 18"]
+        allowed_candidates = [c for c in candidates if c in allowed_items_part_iii]
+        target_key = "item 18"
+        if allowed_candidates:
+            vals = {"item 17": item17_val, "item 18": item18_val}
+            nonempty = [c for c in allowed_candidates if vals.get(c)]
+            if len(nonempty) == 1:
+                target_key = nonempty[0]
+            elif len(nonempty) > 1:
+                target_key = "item 18" if (len(item18_val) >= len(item17_val) and "item 18" in allowed_candidates) else "item 17"
             else:
-                result["extracted"][item_name.lower()] = content
+                target_key = "item 18" if "item 18" in allowed_candidates else "item 17"
+        # 附加内容：若没有允许的目标项则写入 extracted，避免破坏与 structure 的一致性
+        if financal_elements_content:
+            if target_key:
+                part.setdefault(target_key, "")
+                part[target_key] += financal_elements_content
+            else:
+                result.setdefault("extracted", {}).setdefault("item 18", "")
+                result["extracted"]["item 18"] += financal_elements_content
 
+        # if len(result.get("part ii", {}).get("item 8", "")) < 20000 and len(result.get("part iv", {}).get("item 15", "")) < 20000:
+        if len(result.get("part iv", {}).get("item 19", "")) > 10000 or len(result.get("extracted", {}).get("signatures", "")) > 10000:
+            # 从以下两个模块中找出字符长度最长的模块，然后找出第一个能匹配到的字符
+            # "CONSOLIDATED FINANCIAL STATEMENTS"（不区分大小写），将从该匹配处开始的内容附加到 item 8 中
+            # 候选模块：result["extracted"]["signature"], result["part iv"]["item 16"]
+            signature_text = ""
+            item19_text = ""
+            try:
+                signature_text = result.get("extracted", {}).get("signature", "") or ""
+            except Exception:
+                signature_text = ""
+            try:
+                item19_text = result.get("part iii", {}).get("item 19", "") or ""
+            except Exception:
+                item19_text = ""
+        
+            # 选择较长文本并记录来源模块键
+            if len(item19_text) >= len(signature_text):
+                candidate_text = item19_text
+                candidate_key = ("part iii", "item 19")
+            else:
+                candidate_text = signature_text
+                candidate_key = ("extracted", "signature")
+        
+            if candidate_text:
+                match = re.search(r"CONSOLIDATED\s+FINANCIAL\s+STATEMENTS", candidate_text, re.IGNORECASE)
+                if match:
+                    # 被拆分的数据：上半部分（匹配之前）填充回原本的模块，下半部分（从匹配开始）附加到 item 8
+                    before = candidate_text[:match.start()]
+                    tail = candidate_text[match.start():]
+        
+                    # 上半部分填充回原本的模块（覆盖原模块内容为匹配前文本）
+                    result.setdefault(candidate_key[0], {})[candidate_key[1]] = (before or "").strip()
+
+                    # 下半部分附加到 item 8
+                    result.setdefault("part iii", {}).setdefault(target_key, "")
+                    result["part iii"][target_key] += "\n" + tail.strip()
         return result

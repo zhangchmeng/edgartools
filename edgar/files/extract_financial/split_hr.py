@@ -31,6 +31,7 @@ class HRPageSplitter(BasePageSplitter):
         # 记录前一个有效的页码分割线
         prev_valid_hr = None
         prev_hr = None
+        prev_number = None
 
         # 遍历所有HR标签，提取页面内容
         for hr in hr_tags:
@@ -38,9 +39,18 @@ class HRPageSplitter(BasePageSplitter):
             page_number = self._find_page_number_before_hr(hr)
 
             if page_number:
-                page_elements = self._extract_page_content_between_hrs(
-                    soup, prev_valid_hr or prev_hr, hr
-                )
+                if page_number > prev_number:
+                    page_elements = self._extract_page_content_between_hrs(
+                        soup, prev_valid_hr or prev_hr, hr
+                    )
+                elif page_number == prev_number:
+                    page_elements = self._extract_page_content_between_hrs(
+                        soup, prev_hr, hr
+                    )
+                elif page_number < prev_number:
+                    page_elements = self._extract_page_content_between_hrs(
+                        soup, prev_valid_hr or prev_hr, hr
+                    )
 
                 if page_elements:
                     # 创建页面内容对象
@@ -55,6 +65,7 @@ class HRPageSplitter(BasePageSplitter):
 
                 # 更新前一个有效的页码分割线
                 prev_valid_hr = hr
+                prev_number = page_number
             prev_hr = hr
 
         # 处理最后一个HR标签之后的剩余内容
@@ -91,27 +102,7 @@ class HRPageSplitter(BasePageSplitter):
     def _extract_page_content_between_hrs(self, soup, prev_hr, current_hr):
         """提取前一个HR标签到当前HR标签之间的完整内容作为页面内容，并从soup中删除已提取的元素"""
         page_elements = []
-
-        if current_hr is None:
-            return page_elements
-
-        # 预计算 current_hr 的祖先集合，避免删除其祖先容器
-        current_ancestors = set(list(current_hr.parents)) if current_hr else set()
-
-        # 跨父级遍历：子树结束后的下一个兄弟或祖先的下一个兄弟
-        def _next_after(node):
-            ns = getattr(node, "next_sibling", None)
-            if ns is not None:
-                return ns
-            parent = getattr(node, "parent", None)
-            while parent is not None:
-                ns = getattr(parent, "next_sibling", None)
-                if ns is not None:
-                    return ns
-                parent = getattr(parent, "parent", None)
-            return None
-
-        # 确定起始元素
+        # 确定起始元素（顺序已保证正确，逐个遍历并删除）
         if prev_hr is None:
             start = soup.body if getattr(soup, "body", None) else soup
             current_element = getattr(start, "next_element", None)
@@ -119,24 +110,23 @@ class HRPageSplitter(BasePageSplitter):
             current_element = getattr(prev_hr, "next_element", None)
 
         # 提取元素直到当前HR
+        current_element.next_element
         while current_element is not None and current_element is not current_hr:
             # 跳过 current_hr 的祖先（不删除容器，进入其子树）
-            if current_element in current_ancestors:
-                current_element = getattr(current_element, "next_element", None)
-                continue
+            # 计算删除后的下一个元素：优先使用当前节点的 next_sibling，其次向上回溯查找祖先的 next_sibling
+            ns = getattr(current_element, "next_sibling", None)
+            if ns is None:
+                parent = getattr(current_element, "parent", None)
+                while parent is not None:
+                    ns = getattr(parent, "next_sibling", None)
+                    if ns is not None:
+                        break
+                    parent = getattr(parent, "parent", None)
 
-            # 预先计算删除后的下一个元素（跨越当前节点子树）
-            next_element = _next_after(current_element)
+            page_elements.append(current_element.extract())
 
-            # 仅调用一次 extract，提高效率
-            removed = None
-            if hasattr(current_element, "extract"):
-                removed = current_element.extract()
-                if getattr(current_element, "name", None):
-                    page_elements.append(removed)
-
-            current_element = next_element
-
+            # 进入下一个候选元素（跨越已删除子树)
+            current_element = ns
         return page_elements
 
     def _process_remaining_content(

@@ -90,6 +90,7 @@ class BasePageSplitter(ABC):
             r"^F-(\d+)\s*$",  # 以F-数字结尾
             r"^\s*F-(\d+)",  # 以F-数字开头
             r"^F-\s*(\d+)",  # 处理F- 10等中间有空格的情况
+            r"^\s*-\s*F-(\d+)\s*-\s*$",  # 处理- F-18 -样式
         ]
 
         for pattern in patterns:

@@ -282,9 +282,13 @@ def chunks2df(chunks: List[List[Block]],
                                      Item=lambda df: item_detector(df.Text)
                                      )
 
+    # 移除调试断点
+    # import pdb;pdb.set_trace()
     # chunk_df[(chunk_df.Item.notnull())|(chunk_df.Part.notnull())]
     # If the row is 'toc' then set the item and part to empty
     chunk_df.loc[chunk_df.Item.str.contains('\n', na=False), 'Item'] = np.nan
+    # 记录前向填充前的原始 Item 检测结果，便于基于 Item 列直接查找下一个有值的索引
+    raw_items = chunk_df.Item.copy()
     # if item_adjuster:
     # chunk_df = item_adjuster(chunk_df, **{'item_structure': item_structure, 'item_detector': item_detector})
     # Foward fill item and parts
@@ -300,7 +304,16 @@ def chunks2df(chunks: List[List[Block]],
     signature_rows = chunk_df[chunk_df.Signature]
     if len(signature_rows) > 0:
         signature_loc = signature_rows.index[-1]
-        chunk_df.loc[signature_loc:, 'Item'] = np.nan
+        # 通过检查原始 Item 列（前向填充前）的值，得到从 signature_loc 起的下一个有值的索引
+        try:
+            next_valid_idx = raw_items.loc[signature_loc + 1:].dropna().index[0]
+        except Exception:
+            next_valid_idx = None
+        if next_valid_idx is not None:
+            mask = (chunk_df.index >= signature_loc) & (chunk_df.index < next_valid_idx)
+        else:
+            mask = (chunk_df.index >= signature_loc)
+        chunk_df.loc[mask, 'Item'] = np.nan
         chunk_df.Signature = chunk_df.Signature.fillna("")
 
     # Fill the Item column with "" then set to title case
@@ -310,6 +323,7 @@ def chunks2df(chunks: List[List[Block]],
     # Normalize spaces in item
     chunk_df.Item = chunk_df.Item.apply(lambda item: re.sub(r'\s+', ' ', item))
     chunk_df.Part = chunk_df.Part.apply(lambda part: re.sub(r'\s+', ' ', part).strip())
+    chunk_df.Part = chunk_df.Part.str.lower()
 
     # Finalize the colums
     chunk_df = chunk_df[['Text', 'Table', 'Chars', 'Signature', 'TocLink', 'Toc', 'Empty', 'Part', 'Item']]
@@ -367,7 +381,6 @@ class ChunkedDocument:
         
         # Create result dictionary
         result = {}
-        
         # Group by Part and collect Items and content under each Part
         for part in filtered_df['Part'].dropna().unique():
             part_items = filtered_df[filtered_df['Part'] == part]['Item'].dropna().unique().tolist()

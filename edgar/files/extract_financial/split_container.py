@@ -154,12 +154,9 @@ class ContainerPageSplitter(BasePageSplitter):
         return filtered_containers
 
     def _extract_container_content(self, prev_container, current_container):
-        """收集 prev_container 与 current_container 之间的所有节点，并从原始 DOM 中删除这些节点。
-        修复&优化：
-        - 当 prev 与 current 相同或 prev 不在 current 之前（文档顺序）时，返回空；
-        - 考虑跨父级元素遍历；
-        - 不删除 current_container 及其祖先容器，仅删除其之前的内容；
-        - 用基于祖先路径与兄弟顺序的比较替代全局 next_element 扫描，显著降低复杂度与遍历开销。
+        """按文档顺序逐个提取并删除 prev_container 与 current_container 之间的所有节点。
+        参考 _extract_page_content_between_hrs 的“next_sibling 优先，缺失时向上回溯祖先的 next_sibling”的遍历策略，
+        同时安全跳过 current_container 的祖先，避免误删容器本身。
         """
         removed_elements = []
         if prev_container is None or current_container is None:
@@ -170,52 +167,53 @@ class ContainerPageSplitter(BasePageSplitter):
         # 预计算 current_container 的祖先集合（用于快速判断）
         current_ancestors = set(list(current_container.parents))
 
-        # 构建从根到节点的路径（包含该节点）
-        # 使用“最低公共祖先 + 兄弟顺序”判断 prev 是否在 current 之前
-        # 避免通过 next_element 做全文档扫描
-        # 计算“某节点子树结束后的下一个兄弟或祖先的下一个兄弟”（跨父级遍历）
-        def _next_after(node):
-            if node.next_sibling is not None:
-                return node.next_sibling
-            parent = node.parent
-            while parent is not None:
-                if parent.next_sibling is not None:
-                    return parent.next_sibling
-                parent = parent.parent
-            return None
-
-        # 根据是否为祖先关系选择起点
-        # 若 prev_container 是 current_container 的祖先，则从其子树内开始；
-        # 否则，从 prev_container 子树之后的第一个节点开始。
+        # 选择遍历起点：
+        # - 若 prev 是 current 的祖先，则从其子树内开始（prev.next_element）；
+        # - 否则，从 prev 子树结束后的第一个兄弟或祖先的下一个兄弟开始（横向越过子树）。
         if prev_container in current_ancestors:
-            node = prev_container.next_element
+            node = getattr(prev_container, "next_element", None)
         else:
-            node = _next_after(prev_container)
+            ns = getattr(prev_container, "next_sibling", None)
+            if ns is None:
+                parent = getattr(prev_container, "parent", None)
+                while parent is not None:
+                    ns = getattr(parent, "next_sibling", None)
+                    if ns is not None:
+                        break
+                    parent = getattr(parent, "parent", None)
+            node = ns
 
         # 线性遍历并删除，直到遇到 current_container
         while node is not None and node is not current_container:
             # 如果当前节点是 current_container 的祖先，不删除该节点，深入其子树
             if node in current_ancestors:
-                node = node.next_element
+                node = getattr(node, "next_element", None)
                 continue
 
-            # 预先计算删除后的下一个节点（跨越当前节点子树）
-            next_node = _next_after(node)
+            # 预先计算删除后的下一个候选节点：优先使用 next_sibling，其次向上回溯祖先的 next_sibling
+            ns = getattr(node, "next_sibling", None)
+            if ns is None:
+                parent = getattr(node, "parent", None)
+                while parent is not None:
+                    ns = getattr(parent, "next_sibling", None)
+                    if ns is not None:
+                        break
+                    parent = getattr(parent, "parent", None)
 
-            # 删除并收集当前节点（extract 返回被移除的节点）
+            # 删除并收集当前节点（extract 返回被移除的节点），一次性越过其子树
             removed_elements.append(node.extract())
 
-            node = next_node
+            # 进入下一个候选节点
+            node = ns
 
         return removed_elements
-
 
     def _find_page_start(self, f_number_container):
         """
         向上查找页面的起始位置
         """
         # TODO 默认认为 同级元素且仅包含数字的元素可能是上一页的结尾
-        current_element = f_number_container.previous_sibling
+        current_element = f_number_container.previous_element
         page_start = f_number_container  # 默认从F-number容器开始
 
         # 向前查找，直到找到另一个F-number或到达文档开始
@@ -223,19 +221,24 @@ class ContainerPageSplitter(BasePageSplitter):
             # 检查当前元素是否包含F-number模式或纯数字
             if hasattr(current_element, "get_text"):
                 text_content = self._extract_text_content(current_element)
-                # 检查是否包含F-number
-                if self._search_f_number_pattern(text_content):
-                    break
+                # # 检查是否包含F-number
+                # if self._search_f_number_pattern(text_content):
+                #     break
                 # 检查是否为纯数字文本(同级元素)
                 if (
-                    current_element.parent == f_number_container.parent
-                    and (text_content.strip().isdigit() or text_content.strip().strip("-").isdigit())
+                    getattr(current_element, "parent", None) is not None
+                    and getattr(f_number_container, "parent", None) is not None
+                    and current_element.parent.name
+                    == f_number_container.parent.name
+                    and (
+                        text_content.strip().isdigit()
+                        or text_content.strip().strip("-").strip().isdigit()
+                    )
                 ):
                     break
-
             # 更新页面起始位置
             page_start = current_element
-            current_element = current_element.previous_sibling
+            current_element = current_element.previous_element
         return page_start
 
     def _create_page_content(self, page_number, elements):
@@ -346,7 +349,7 @@ if __name__ == "__main__":
         print(f"   找到页码: {container_results.page_numbers}")
         print(f"   总页码数: {len(container_results.page_numbers)}")
         print(f"   页面内容数: {len(container_results.page_contents)}")
-        # import pdb;pdb.set_trace()
+
         # container_results.page_contents[1].text_content
 
     except FileNotFoundError:

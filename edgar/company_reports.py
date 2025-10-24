@@ -74,7 +74,8 @@ class CompanyReport:
     @property
     @lru_cache(maxsize=1)
     def chunked_document(self):
-        return ChunkedDocumentSplitFinancial(self._filing.html())
+        return ChunkedDocument(self._filing.html())
+
 
     @property
     def doc(self):
@@ -283,64 +284,110 @@ class TenK(CompanyReport):
     def id_parse_document(self, markdown:bool=False):
         from edgar.files.html_documents_id_parser import ParsedHtml10K
         return ParsedHtml10K().extract_html(self._filing.html(), self.structure, markdown=markdown, form_type=self._filing.form)
+
     
-    @classmethod
-    def _split_financial_content(cls):
-        # 判断 item 8/ item 16内容长度均小于10000时，
-        # 尝试从 item 16/signature 中拆分财务模块 
-            # 判断 item 16/  signature 较长的item
-            # 根据financial 关键字判断是否可能为财务模块的行，然后分割长文本
-            # 将分割出的较长的文本 附加到item 8中
-        pass
+    @property
+    @lru_cache(maxsize=1)
+    def chunked_document_split_financial(self):
+        return ChunkedDocumentSplitFinancial(self._filing.html())
 
     def get_re_parse_res(self, markdown:bool=True):
-        part_item_res = self.chunked_document.part_item_res(markdown=markdown)
-        financial_content = self.chunked_document.assemble_financial_content(markdown=markdown)
+        financial_content = self.chunked_document_split_financial.assemble_financial_content(markdown=markdown)
+        part_item_res = self.chunked_document_split_financial.part_item_res(markdown=markdown)
+        # 合并被错误拆分到不同 Part 的相同 Item，统一归并到其规范 Part，并移除其它 Part 的重复项
+        def _canonical_part_for_item(item_key: str):
+            m = re.match(r'^\s*item\s+(\d+)', item_key, re.IGNORECASE)
+            if not m:
+                return None
+            n = int(m.group(1))
+            if 1 <= n <= 4:
+                return 'part i'
+            if 5 <= n <= 9:
+                return 'part ii'
+            if 10 <= n <= 14:
+                return 'part iii'
+            if 15 <= n <= 16:
+                return 'part iv'
+            return None
+        
+        part_order = ['part i', 'part ii', 'part iii', 'part iv']
+        items_content_map = {}
+        for p, items in part_item_res.items():
+            if p == 'extracted' or not isinstance(items, dict):
+                continue
+            for item_key, content in items.items():
+                text = str(content or '').strip()
+                if text:
+                    items_content_map.setdefault(item_key, []).append((p, text))
+        
+        def _part_index(p: str) -> int:
+            return part_order.index(p) if p in part_order else len(part_order)
+        
+        for item_key, entries in items_content_map.items():
+            if len(entries) <= 1:
+                continue
+            # 选择规范 Part；无规范则使用首个出现的 Part
+            canonical = _canonical_part_for_item(item_key) or entries[0][0]
+            part_item_res.setdefault(canonical, {}).setdefault(item_key, '')
+            initial = str(part_item_res[canonical][item_key] or '').strip()
+            
+            # 按预设 Part 顺序合并，避免重复追加相同的初始内容
+            entries_sorted = sorted(entries, key=lambda t: _part_index(t[0]))
+            aggregated = []
+            if initial:
+                aggregated.append(initial)
+            for p, c in entries_sorted:
+                if c and (p != canonical or c != initial):
+                    aggregated.append(c)
+            part_item_res[canonical][item_key] = ('\n'.join(aggregated)).strip()
+            
+            # 从其它 Part 中移除该 Item，避免重复
+            for p, _ in entries:
+                if p != canonical and isinstance(part_item_res.get(p), dict):
+                    try:
+                        if item_key in part_item_res[p]:
+                            del part_item_res[p][item_key]
+                    except Exception:
+                        part_item_res[p][item_key] = ''
+        
         if financial_content:
             if part_item_res.get("part ii") and part_item_res['part ii'].get("item 8"):
                 part_item_res['part ii']['item 8'] += financial_content
-        if len(part_item_res.get("part ii", {}).get("item 8", "")) < 10000 and len(part_item_res.get("part iv", {}).get("item 15", "")) < 10000:
-            # 从以下两个模块中找出字符长度最长的模块，然后找出第一个能匹配到的字符
-            # "CONSOLIDATED FINANCIAL STATEMENTS"（不区分大小写），将从该匹配处开始的内容附加到 item 8 中
-            # 候选模块：result["extracted"]["signature"], result["part iv"]["item 16"]
+        # 从以下两个模块中找出字符长度最长的模块，然后找出第一个能匹配到的字符
+        # "CONSOLIDATED FINANCIAL STATEMENTS"（不区分大小写），将从该匹配处开始的内容附加到 item 8 中
+        # 候选模块：result["extracted"]["signature"], result["part iv"]["item 16"]
+        signature_text = ""
+        item16_text = ""
+        try:
+            signature_text = part_item_res.get("extracted", {}).get("signature", "") or ""
+        except Exception:
             signature_text = ""
+        try:
+            item16_text = part_item_res.get("part iv", {}).get("item 16", "") or ""
+        except Exception:
             item16_text = ""
-            try:
-                signature_text = part_item_res.get("extracted", {}).get("signature", "") or ""
-            except Exception:
-                signature_text = ""
-            try:
-                item16_text = part_item_res.get("part iv", {}).get("item 16", "") or ""
-            except Exception:
-                item16_text = ""
-        
-            # 选择较长文本并记录来源模块键
-            if len(item16_text) >= len(signature_text):
-                candidate_text = item16_text
-                candidate_key = ("part iv", "item 16")
-            else:
-                candidate_text = signature_text
-                candidate_key = ("extracted", "signature")
-        
-            if candidate_text:
-                import re
-                match = re.search(r"CONSOLIDATED\s+FINANCIAL\s+STATEMENTS", candidate_text, re.IGNORECASE)
-                if match:
-                    # 被拆分的数据：上半部分（匹配之前）填充回原本的模块，下半部分（从匹配开始）附加到 item 8
-                    before = candidate_text[:match.start()]
-                    tail = candidate_text[match.start():]
-        
-                    # 为避免附加过多内容，尝试在下一个可能的章节标题处截断尾部
-                    stop = re.search(r"\n\s*(SIGNATURES|ITEM\s+\d+|EXHIBITS?)\b", tail, re.IGNORECASE)
-                    if stop:
-                        tail = tail[:stop.start()]
-        
-                    # 上半部分填充回原本的模块（覆盖原模块内容为匹配前文本）
-                    part_item_res.setdefault(candidate_key[0], {})[candidate_key[1]] = (before or "").strip()
-        
-                    # 下半部分附加到 item 8
-                    part_item_res.setdefault("part ii", {}).setdefault("item 8", "")
-                    part_item_res["part ii"]["item 8"] += "\n" + tail.strip()
+    
+        # 选择较长文本并记录来源模块键
+        if len(item16_text) >= len(signature_text):
+            candidate_text = item16_text
+            candidate_key = ("part iv", "item 16")
+        else:
+            candidate_text = signature_text
+            candidate_key = ("extracted", "signature")
+    
+        if candidate_text:
+            match = re.search(r"CONSOLIDATED\s+FINANCIAL\s+STATEMENTS", candidate_text, re.IGNORECASE)
+            if match:
+                # 被拆分的数据：上半部分（匹配之前）填充回原本的模块，下半部分（从匹配开始）附加到 item 8
+                before = candidate_text[:match.start()]
+                tail = candidate_text[match.start():]
+    
+                # 上半部分填充回原本的模块（覆盖原模块内容为匹配前文本）
+                part_item_res.setdefault(candidate_key[0], {})[candidate_key[1]] = (before or "").strip()
+    
+                # 下半部分附加到 item 8
+                part_item_res.setdefault("part ii", {}).setdefault("item 8", "")
+                part_item_res["part ii"]["item 8"] += "\n" + tail.strip()
         return part_item_res
 
     def get_id_parse_res(self, markdown:bool=True):
@@ -358,10 +405,6 @@ class TenK(CompanyReport):
             if re.match(r'^\b(PART\s+[IVXLC]+)\b', last_line):
                 item_text = item_text.rstrip(last_line)
         return item_text
-
-    def get_all_part_item_res(self, markdown: bool = True):
-        res = self.id_parse_document(markdown)
-        text_res = self.chunked_document.get_all_part_item_text()
 
     def get_item_with_part(self, part: str, item: str, markdown:bool=True):
         if not part:
@@ -757,6 +800,65 @@ class TwentyF(CompanyReport):
 
     def __str__(self):
         return f"""TwentyF('{self.company}')"""
+    
+    @property
+    @lru_cache(maxsize=1)
+    def chunked_document_split_financial(self):
+        return ChunkedDocumentSplitFinancial(self._filing.html())
+
+    def get_re_parse_res(self, markdown:bool=True):
+        financial_content = self.chunked_document_split_financial.assemble_financial_content(markdown=markdown)
+        part_item_res = self.chunked_document_split_financial.part_item_res(markdown=markdown)
+        # 合并被错误拆分到不同 Part 的相同 Item，统一归并到其规范 Part，并移除其它 Part 的重复项
+        if financial_content:
+            if part_item_res.get("part iii") and part_item_res['part iii'].get("item 18"):
+                part_item_res['part iii']['item 18'] += financial_content
+        # 从以下两个模块中找出字符长度最长的模块，然后找出第一个能匹配到的字符
+        # "CONSOLIDATED FINANCIAL STATEMENTS"（不区分大小写），将从该匹配处开始的内容附加到 item 8 中
+        # 候选模块：result["extracted"]["signature"], result["part iv"]["item 16"]
+        signature_text = ""
+        item19_text = ""
+        try:
+            signature_text = part_item_res.get("extracted", {}).get("signature", "") or ""
+        except Exception:
+            signature_text = ""
+        try:
+            item19_text = part_item_res.get("part iii", {}).get("item 19", "") or ""
+        except Exception:
+            item19_text = ""
+    
+        # 选择较长文本并记录来源模块键
+        if len(item19_text) >= len(signature_text):
+            candidate_text = item19_text
+            candidate_key = ("part iii", "item 19")
+        else:
+            candidate_text = signature_text
+            candidate_key = ("extracted", "signature")
+    
+        if candidate_text:
+            match = re.search(r"CONSOLIDATED\s+FINANCIAL\s+STATEMENTS", candidate_text, re.IGNORECASE)
+            if match:
+                # 被拆分的数据：上半部分（匹配之前）填充回原本的模块，下半部分（从匹配开始）附加到 item 8
+                before = candidate_text[:match.start()]
+                tail = candidate_text[match.start():]
+    
+                # 上半部分填充回原本的模块（覆盖原模块内容为匹配前文本）
+                part_item_res.setdefault(candidate_key[0], {})[candidate_key[1]] = (before or "").strip()
+    
+                # 下半部分附加到 item 8
+                part_item_res.setdefault("part iii", {}).setdefault("item 18", "")
+                part_item_res["part iii"]["item 18"] += "\n" + tail.strip()
+        return part_item_res
+
+    @lru_cache(maxsize=1)
+    def id_parse_document(self, markdown:bool=False):
+        from edgar.files.html_documents_id_parser import ParsedHtml20F
+        return ParsedHtml20F().extract_html(self._filing.html(), self.structure, markdown=markdown, form_type=self._filing.form)
+
+
+    def get_id_parse_res(self, markdown:bool=True):
+        return self.id_parse_document(markdown=markdown)
+            
 
 
 # class TenKT(TenK):
