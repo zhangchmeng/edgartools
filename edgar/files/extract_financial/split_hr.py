@@ -31,7 +31,7 @@ class HRPageSplitter(BasePageSplitter):
         # 记录前一个有效的页码分割线
         prev_valid_hr = None
         prev_hr = None
-        prev_number = None
+        prev_number = 0
 
         # 遍历所有HR标签，提取页面内容
         for hr in hr_tags:
@@ -77,22 +77,26 @@ class HRPageSplitter(BasePageSplitter):
         return self._create_standard_result(page_numbers, page_contents), soup
 
     def _find_page_number_before_hr(self, hr):
-        """在HR标签前查找页码 - 仅检查第一个非空元素"""
+        """在HR标签前查找页码 - 仅检查第一个非空元素；遇到另一个hr则返回None"""
         prev_element = getattr(hr, "previous_element", None)
 
         # 找到第一个非空元素
         while prev_element:
+            # 若遇到另一个HR标签，直接返回None，避免跨越HR边界
+            if prev_element and getattr(prev_element, "name", "") and getattr(prev_element, "name", "").lower() == "hr":
+                    return None
+
             text = self._extract_text_content(prev_element)
             if text:  # 找到第一个非空元素
                 # 使用基类的F-number模式搜索方法
                 page_numbers = self._search_f_number_pattern(text)
                 if page_numbers:
-                    return str(page_numbers[0])
+                    return int(page_numbers[0])
                 else:
                     if getattr(prev_element, "parent", None):
-                        page_numbers = self._search_f_number_pattern(self._extract_text_content(prev_element.parent.parent))
+                        page_numbers = self._search_f_number_pattern(self._extract_text_content(prev_element.parent)) or self._search_f_number_pattern(self._extract_text_content(prev_element.parent.parent))
                         if page_numbers:
-                            return str(page_numbers[0])
+                            return int(page_numbers[0])
                     return None  # 第一个非空元素不匹配就直接返回None
             # 使用文档序的上一个元素（可跨父级，可能跳出当前元素到上一个父元素的最底部）
             prev_element = getattr(prev_element, "previous_element", None)
@@ -194,7 +198,7 @@ class HRPageSplitter(BasePageSplitter):
 
 if __name__ == "__main__":
     # 测试页码提取功能
-    html_file_path = "/Users/chenghao.zhang/Documents/secfile/edgar/0000908311-25-000017.html"
+    html_file_path = "/Users/chenghao.zhang/Documents/secfile/extract_financial/test.html"
     # html_file_path = "/Users/chenghao.zhang/Documents/secfile/edgar/000149315225017715.html"
     try:
         # 读取HTML文件

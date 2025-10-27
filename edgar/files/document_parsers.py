@@ -199,7 +199,7 @@ class ParsedHtml10K(BaseHtmlParser):
             "Item 14": "Item 14.",
             "Item 15": "Item 15.",
             "Item 16": "Item 16.",
-            "Signatures": "Signature",
+            "Signature": "Signature",
         }
         items_match_0 = {key: key for key in items_match_1}
         items_match_2 = {  # Exact match after stripping whitespace
@@ -226,7 +226,7 @@ class ParsedHtml10K(BaseHtmlParser):
             "Item 14": "Part III, Item 14",
             "Item 15": "Part IV, Item 15",
             "Item 16": "Part IV, Item 16",
-            "Signatures": "Signature",
+            "Signature": "Signature",
         }
         items_match_2_1 = {
             "Item 1": "Item No. 1",
@@ -277,7 +277,7 @@ class ParsedHtml10K(BaseHtmlParser):
             "Item 14": "Part III. Item 14",
             "Item 15": "Part IV. Item 15",
             "Item 16": "Part IV. Item 16",
-            "Signatures": "Signature",
+            "Signature": "Signature",
         }
         items_match_2_3 = {  # Exact match after stripping whitespace
             "Item 1": "Part I. Item 1.",
@@ -303,7 +303,7 @@ class ParsedHtml10K(BaseHtmlParser):
             "Item 14": "Part III. Item 14.",
             "Item 15": "Part IV. Item 15.",
             "Item 16": "Part IV. Item 16.",
-            "Signatures": "Signature",
+            "Signature": "Signature",
         }
 
         items_match_3 = {  # Match item names (startswith comparison)
@@ -545,14 +545,14 @@ class ParsedHtml10K(BaseHtmlParser):
             result["part ii"]["item 8"] += financal_elements_content
 
         # if len(result.get("part ii", {}).get("item 8", "")) < 20000 and len(result.get("part iv", {}).get("item 15", "")) < 20000:
-        if len(result.get("part iv", {}).get("item 16", "")) > 10000 or len(result.get("extracted", {}).get("signatures", "")) > 10000:
+        if len(result.get("part iv", {}).get("item 16", "")) > 10000 or len(result.get("extracted", {}).get("signature", "")) > 10000:
             # 从以下两个模块中找出字符长度最长的模块，然后找出第一个能匹配到的字符
             # "CONSOLIDATED FINANCIAL STATEMENTS"（不区分大小写），将从该匹配处开始的内容附加到 item 8 中
-            # 候选模块：result["extracted"]["signatures"], result["part iv"]["item 16"]
+            # 候选模块：result["extracted"]["signature"], result["part iv"]["item 16"]
             signature_text = ""
             item16_text = ""
             try:
-                signature_text = result.get("extracted", {}).get("signatures", "") or ""
+                signature_text = result.get("extracted", {}).get("signature", "") or ""
             except Exception:
                 signature_text = ""
             try:
@@ -566,10 +566,23 @@ class ParsedHtml10K(BaseHtmlParser):
                 candidate_key = ("part iv", "item 16")
             else:
                 candidate_text = signature_text
-                candidate_key = ("extracted", "signatures")
+                candidate_key = ("extracted", "signature")
             # result["extracted"]["signature"]
             if candidate_text:
-                match = re.search(r"CONSOLIDATED\s+FINANCIAL\s+STATEMENTS", candidate_text, re.IGNORECASE)
+                financial_statement_patterns = [
+                    r"CONSOLIDATED\s+FINANCIAL\s+STATEMENTS",
+                    r"COMBINED\s+FINANCIAL\s+STATEMENTS", 
+                    r"CONDENSED\s+CONSOLIDATED\s+FINANCIAL\s+STATEMENTS",
+                    r"CONDENSED\s+COMBINED\s+FINANCIAL\s+STATEMENTS",
+                    r"FINANCIAL\s+STATEMENTS",
+                ]
+                
+                match = None
+                for pattern in financial_statement_patterns:
+                    match = re.search(pattern, candidate_text, re.IGNORECASE)
+                    if match:
+                        break
+                
                 if match:
                     # 被拆分的数据：上半部分（匹配之前）填充回原本的模块，下半部分（从匹配开始）附加到 item 8
                     before = candidate_text[:match.start()]
@@ -659,7 +672,7 @@ class ParsedHtml10Q(BaseHtmlParser):
                 "Item 5": "Item 5.",
                 "Item 6": "Item 6.",
             },
-            "extracted": {"Signatures": "Signature"},
+            "extracted": {"Signature": "Signature"},
         }
 
         items_match_2 = {  # Part-prefixed items
@@ -897,7 +910,39 @@ class ParsedHtml20F(ParsedHtml10K):
             "Item 17": "Item 17.",
             "Item 18": "Item 18.",
             "Item 19": "Item 19.",
-            "Signatures": "Signature",
+            "Signature": "Signature",
+        }
+        items_match_1_1 = {  # Match items starting with these patterns (20-F)
+            "Item 1": "Item 1:",
+            "Item 2": "Item 2:",
+            "Item 3": "Item 3:",
+            "Item 4": "Item 4:",
+            "Item 4A": "Item 4A:",
+            "Item 5": "Item 5:",
+            "Item 6": "Item 6:",
+            "Item 7": "Item 7:",
+            "Item 8": "Item 8:",
+            "Item 9": "Item 9:",
+            "Item 10": "Item 10:",
+            "Item 11": "Item 11:",
+            "Item 12": "Item 12:",
+            "Item 13": "Item 13:",
+            "Item 14": "Item 14:",
+            "Item 15": "Item 15:",
+            "Item 16A": "Item 16A:",
+            "Item 16B": "Item 16B:",
+            "Item 16C": "Item 16C:",
+            "Item 16D": "Item 16D:",
+            "Item 16E": "Item 16E:",
+            "Item 16F": "Item 16F:",
+            "Item 16G": "Item 16G:",
+            "Item 16H": "Item 16H:",
+            "Item 16I": "Item 16I:",
+            "Item 16J": "Item 16J:",
+            "Item 17": "Item 17:",
+            "Item 18": "Item 18:",
+            "Item 19": "Item 19:",
+            "Signature": "Signature",
         }
         items_match_0 = {key: key for key in items_match_1}
         items_match_2 = {  # Exact match after stripping whitespace (20-F)
@@ -930,7 +975,7 @@ class ParsedHtml20F(ParsedHtml10K):
             "Item 17": "Part III, Item 17",
             "Item 18": "Part III, Item 18",
             "Item 19": "Part III, Item 19",
-            "Signatures": "Signature",
+            "Signature": "Signature",
         }
         items_match_2_1 = {  # Item No. format (20-F)
             "Item 1": "Item No. 1",
@@ -993,7 +1038,7 @@ class ParsedHtml20F(ParsedHtml10K):
             "Item 17": "Part III. Item 17",
             "Item 18": "Part III. Item 18",
             "Item 19": "Part III. Item 19",
-            "Signatures": "Signature",
+            "Signature": "Signature",
         }
         items_match_2_3 = {  # Exact match after stripping whitespace (20-F)
             "Item 1": "Part I. Item 1.",
@@ -1025,7 +1070,7 @@ class ParsedHtml20F(ParsedHtml10K):
             "Item 17": "Part III. Item 17.",
             "Item 18": "Part III. Item 18.",
             "Item 19": "Part III. Item 19.",
-            "Signatures": "Signature",
+            "Signature": "Signature",
         }
 
         items_match_3 = {  # Exact match after stripping whitespace (20-F)
@@ -1058,7 +1103,7 @@ class ParsedHtml20F(ParsedHtml10K):
             "Item 17": "Financial Statements",
             "Item 18": "Financial Statements",
             "Item 19": "Exhibits",
-            "Signatures": "Signatures",
+            "Signature": "Signatures",
         }
 
         items_match_4 = {  # Match combined items (startswith comparison)
@@ -1122,6 +1167,10 @@ class ParsedHtml20F(ParsedHtml10K):
                 items_match_1,
                 lambda x, y: x.strip().lower().startswith(y.lower()),
             ),
+            (
+                items_match_1_1,
+                lambda x, y: x.strip().lower().startswith(y.lower()),
+            ),
             (items_match_2, lambda x, y: x.strip().lower() == y.lower()),
             (items_match_2_1, lambda x, y: x.strip().lower() == y.lower()),
             (items_match_2_2, lambda x, y: x.strip().lower() == y.lower()),
@@ -1138,9 +1187,8 @@ class ParsedHtml20F(ParsedHtml10K):
         processed_items = set()
 
         for match_map, match_function in match_function_map:
+            
             # Stop processing further maps if we've collected 15 or more items
-            if len(item_links_dict) >= 15:
-                break
             for item_name, match_text in match_map.items():
                 # If item has been processed, skip subsequent matching
                 if item_name in processed_items:
@@ -1214,7 +1262,7 @@ class ParsedHtml20F(ParsedHtml10K):
         index_table = self.extract_html_link_info(html_content)
         raw_item_links = self.extract_item_and_split(index_table)
         item_links = self.classify_items_to_parts(raw_item_links, structure)
-
+        
         if not item_links or (len(item_links) < 15 and form_type == "20-F"):
             # new_item_links = extract_items_with_ai(structure.structure, index_table)
             new_item_links = extract_catalog_structure(html_content, structure.structure, form_type)
@@ -1253,9 +1301,9 @@ class ParsedHtml20F(ParsedHtml10K):
             else:
                 result.setdefault("extracted", {}).setdefault("item 18", "")
                 result["extracted"]["item 18"] += financal_elements_content
-
+                
         # if len(result.get("part ii", {}).get("item 8", "")) < 20000 and len(result.get("part iv", {}).get("item 15", "")) < 20000:
-        if len(result.get("part iv", {}).get("item 19", "")) > 10000 or len(result.get("extracted", {}).get("signatures", "")) > 10000:
+        if len(result.get("part iii", {}).get("item 19", "")) > 10000 or len(result.get("extracted", {}).get("signature", "")) > 10000:
             # 从以下两个模块中找出字符长度最长的模块，然后找出第一个能匹配到的字符
             # "CONSOLIDATED FINANCIAL STATEMENTS"（不区分大小写），将从该匹配处开始的内容附加到 item 8 中
             # 候选模块：result["extracted"]["signature"], result["part iv"]["item 16"]
@@ -1279,7 +1327,22 @@ class ParsedHtml20F(ParsedHtml10K):
                 candidate_key = ("extracted", "signature")
         
             if candidate_text:
-                match = re.search(r"CONSOLIDATED\s+FINANCIAL\s+STATEMENTS", candidate_text, re.IGNORECASE)
+                # 添加更多的匹配规则 Combined Financial Statements
+                # 匹配各种形式的财务报表标题
+                financial_statement_patterns = [
+                    r"CONSOLIDATED\s+FINANCIAL\s+STATEMENTS",
+                    r"COMBINED\s+FINANCIAL\s+STATEMENTS", 
+                    r"CONDENSED\s+CONSOLIDATED\s+FINANCIAL\s+STATEMENTS",
+                    r"CONDENSED\s+COMBINED\s+FINANCIAL\s+STATEMENTS",
+                    r"FINANCIAL\s+STATEMENTS",
+                ]
+
+                match = None
+                for pattern in financial_statement_patterns:
+                    match = re.search(pattern, candidate_text, re.IGNORECASE)
+                    if match:
+                        break
+                
                 if match:
                     # 被拆分的数据：上半部分（匹配之前）填充回原本的模块，下半部分（从匹配开始）附加到 item 8
                     before = candidate_text[:match.start()]

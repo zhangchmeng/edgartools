@@ -402,10 +402,9 @@ class AssembleText:
         results = {}
         for key, value in content_by_link.items():
             results[key] = AssembleText.assemble_html_document(value)
-        
-
+    
         if not any("signature" in str(key).lower() for key in content_by_link.keys()):
-            last_item = item_links[-1]
+            last_item = ordered_links[-1]
             last_item_name = last_item[0] if isinstance(last_item, tuple) else last_item[0]
             last_content = results.get(last_item_name, "")
             if last_content:
@@ -429,6 +428,7 @@ class AssembleText:
                     results[last_item_name] = before_sig.strip()
                 else:
                     results[("extracted", "signature")] = ""
+
         return results
 
     @staticmethod

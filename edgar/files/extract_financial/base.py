@@ -112,6 +112,13 @@ class BasePageSplitter(ABC):
         Returns:
             PageNumberExtractionResult对象
         """
+        page_count = 0
+        for pc in page_contents.values():
+            if hasattr(pc, "text_content") and len(pc.text_content) > 100:
+                page_count += 1
+        if page_count <= 5:
+            page_numbers = []
+            page_contents = {}
         if not page_numbers:
             return PageNumberExtractionResult(
                 page_numbers=[], page_contents={}

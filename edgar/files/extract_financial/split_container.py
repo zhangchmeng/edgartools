@@ -49,10 +49,9 @@ class ContainerPageSplitter(BasePageSplitter):
             return self._create_standard_result([], {}), soup
 
         # 找到最长的有序子序列
-        """
-        存在重复页码，需要找到最长的有序子序列
-        """
+        # 存在重复页码，需要找到最长的有序子序列
         # 会出现目录与页码同时存在的情况，html 全部都是table与td元素
+        # issue2 拿到的内容均为目录，如果正文不带页脚，处理将丢弃找到的内容，如果页码不足五页，认为内容不合法，丢弃内容
         sorted_containers = self._find_longest_ordered_subsequence(
             sorted_containers
         )
@@ -205,7 +204,7 @@ class ContainerPageSplitter(BasePageSplitter):
 
             # 进入下一个候选节点
             node = ns
-
+        removed_elements.append(current_container)
         return removed_elements
 
     def _find_page_start(self, f_number_container):
@@ -327,9 +326,7 @@ class ContainerPageSplitter(BasePageSplitter):
 if __name__ == "__main__":
     # 测试ContainerPageSplitter
     # html_file_path = "/Users/chenghao.zhang/Documents/secfile/edgar/0000908311-25-000017.html"
-    html_file_path = (
-        "/Users/chenghao.zhang/Documents/secfile/edgar/000149315225017715.html"
-    )
+    html_file_path = "/Users/chenghao.zhang/Documents/secfile/extract_financial/test.html"
 
     try:
         with open(html_file_path, "r", encoding="utf-8") as f:
@@ -349,8 +346,8 @@ if __name__ == "__main__":
         print(f"   找到页码: {container_results.page_numbers}")
         print(f"   总页码数: {len(container_results.page_numbers)}")
         print(f"   页面内容数: {len(container_results.page_contents)}")
-
         # container_results.page_contents[1].text_content
+
 
     except FileNotFoundError:
         print(f"错误: 找不到文件 {html_file_path}")

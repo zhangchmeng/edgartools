@@ -376,7 +376,19 @@ class TenK(CompanyReport):
             candidate_key = ("extracted", "signature")
     
         if candidate_text:
-            match = re.search(r"CONSOLIDATED\s+FINANCIAL\s+STATEMENTS", candidate_text, re.IGNORECASE)
+            financial_statement_patterns = [
+                r"CONSOLIDATED\s+FINANCIAL\s+STATEMENTS",
+                r"COMBINED\s+FINANCIAL\s+STATEMENTS", 
+                r"CONDENSED\s+CONSOLIDATED\s+FINANCIAL\s+STATEMENTS",
+                r"CONDENSED\s+COMBINED\s+FINANCIAL\s+STATEMENTS",
+                r"FINANCIAL\s+STATEMENTS",
+            ]
+            
+            match = None
+            for pattern in financial_statement_patterns:
+                match = re.search(pattern, candidate_text, re.IGNORECASE)
+                if match:
+                    break
             if match:
                 # 被拆分的数据：上半部分（匹配之前）填充回原本的模块，下半部分（从匹配开始）附加到 item 8
                 before = candidate_text[:match.start()]
@@ -836,7 +848,20 @@ class TwentyF(CompanyReport):
             candidate_key = ("extracted", "signature")
     
         if candidate_text:
-            match = re.search(r"CONSOLIDATED\s+FINANCIAL\s+STATEMENTS", candidate_text, re.IGNORECASE)
+            financial_statement_patterns = [
+                r"CONSOLIDATED\s+FINANCIAL\s+STATEMENTS",
+                r"COMBINED\s+FINANCIAL\s+STATEMENTS", 
+                r"CONDENSED\s+CONSOLIDATED\s+FINANCIAL\s+STATEMENTS",
+                r"CONDENSED\s+COMBINED\s+FINANCIAL\s+STATEMENTS",
+                r"FINANCIAL\s+STATEMENTS",
+            ]
+            
+            match = None
+            for pattern in financial_statement_patterns:
+                match = re.search(pattern, candidate_text, re.IGNORECASE)
+                if match:
+                    break
+                
             if match:
                 # 被拆分的数据：上半部分（匹配之前）填充回原本的模块，下半部分（从匹配开始）附加到 item 8
                 before = candidate_text[:match.start()]

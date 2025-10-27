@@ -68,7 +68,7 @@ def extract_financial_statement(html_content: str) -> FinancialStatementExtracti
                 "page_contents": extraction_result.page_contents,
                 "soup": soup
             }
-            
+    
             # 如果找到了页码，返回结果
             if page_count > 0:
                 return _create_success_result(
