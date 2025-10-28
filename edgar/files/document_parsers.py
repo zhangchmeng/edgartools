@@ -524,6 +524,7 @@ class ParsedHtml10K(BaseHtmlParser):
                 html_content = str(soup_obj)
 
         index_table = self.extract_html_link_info(html_content)
+        index_table = self._priority_index_table(index_table)
         raw_item_links = self.extract_item_and_split(index_table)
         item_links = self.classify_items_to_parts(raw_item_links, structure)
 
@@ -832,7 +833,9 @@ class ParsedHtml10Q(BaseHtmlParser):
     ) -> Dict[str, Any]:
         """Extract 10-Q items from HTML content, handling same item numbers in different parts."""
         index_table = self.extract_html_link_info(html_content)
+
         if self.check_10q_index_table(index_table):
+            index_table = self._priority_index_table(index_table)
             item_links = self.extract_item_and_split(index_table)
             if isinstance(item_links, dict):
                 item_links = list(item_links.items())
@@ -851,9 +854,29 @@ class ParsedHtml10Q(BaseHtmlParser):
         item_result = AssembleText.assemble_items(
             html_content, item_links, markdown=markdown
         )
-        
-        # 使用通用结构化分发函数，将条目严格对齐到 structure，并执行子项合并
-        result, _item_to_part = group_items_by_structure(item_result, structure)
+        # 规范化结构：将 {('part i','Item 1'): value, ...} 转为
+        # {"part i": {"Item 1": value, ...}, "part ii": {...}, "extracted": {...}}
+        result: Dict[str, Dict[str, Any]] = {
+            "part i": {},
+            "part ii": {},
+            "extracted": {},
+        }
+
+        if isinstance(item_result, dict):
+            for one_item, value in item_result.items():
+                # 期望 one_item 为长度为2的 tuple: (part, item_name)
+                if not isinstance(one_item, (tuple, list)) or len(one_item) != 2:
+                    continue
+                part_raw, item_raw = one_item
+                part_key = str(part_raw).lower().strip()
+                item_key = str(item_raw).strip().lower()
+
+                # 如果part在预设的分区中，放入对应分区；否则归入extracted
+                if part_key in result:
+                    result[part_key][item_key] = value
+                else:
+                    result["extracted"][item_key] = value
+        # 若返回的结构异常，直接返回空的三分区结构
         return result
 
 
@@ -1260,6 +1283,7 @@ class ParsedHtml20F(ParsedHtml10K):
                 html_content = str(extract_res.soup)
 
         index_table = self.extract_html_link_info(html_content)
+        index_table = self._priority_index_table(index_table)
         raw_item_links = self.extract_item_and_split(index_table)
         item_links = self.classify_items_to_parts(raw_item_links, structure)
         

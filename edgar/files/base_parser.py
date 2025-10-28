@@ -803,3 +803,32 @@ class BaseHtmlParser:
                         )
 
         return [table_links] if table_links else []
+
+    def _priority_index_table(self, tables: list):
+        """
+        Prioritize tables based on their index in the document.
+        """
+        table_count_map = {}
+        for table_index, table in enumerate(tables or []):
+            table_item_count = 0
+            for item in (table or []):
+                texts = item.get("text")
+                if isinstance(texts, list):
+                    text_join = " ".join([t for t in texts if isinstance(t, str)])
+                else:
+                    text_join = str(texts or "")
+                base = text_join.lower()
+                if "item" in base:
+                    table_item_count += 1
+                elif ("signature" in base) or ("signatures" in base):
+                    table_item_count += 1
+            table_count_map[table_index] = table_item_count
+
+        # 将 table_item_count <= 1 的 table 移到末尾；若所有 table 均 <= 1 则不处理
+        if table_count_map and (max(table_count_map.values()) > 1):
+            greater = [t for i, t in enumerate(tables) if table_count_map.get(i, 0) > 1]
+            less_eq = [t for i, t in enumerate(tables) if table_count_map.get(i, 0) <= 1]
+            tables = greater + less_eq
+        return tables
+
+
