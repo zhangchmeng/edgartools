@@ -1228,6 +1228,30 @@ def clean_html_root(root: Tag) -> Tag:
     ):
         comment.extract()
 
+    # Remove hidden elements defined by inline styles or hidden attribute
+    def _is_hidden_tag(tag: Tag) -> bool:
+        try:
+            style = tag.get("style")
+            if isinstance(style, str):
+                s = style.lower()
+                if re.search(r"display\s*:\s*none", s):
+                    return True
+                if re.search(r"visibility\s*:\s*hidden", s):
+                    return True
+                if re.search(r"opacity\s*:\s*0(\b|$)", s):
+                    return True
+            # HTML5 hidden attribute
+            if tag.has_attr("hidden"):
+                return True
+        except Exception:
+            pass
+        return False
+
+    for tag in root.find_all(_is_hidden_tag):
+        tag.decompose()
+
+
+
     return root
 
 

@@ -1,6 +1,6 @@
-from bs4 import BeautifulSoup, NavigableString
+from bs4 import NavigableString
 import re
-from typing import List, Optional, Union, Dict, Any
+from typing import List, Dict, Any
 from pydantic import BaseModel, Field
 from abc import ABC, abstractmethod
 
@@ -124,13 +124,27 @@ class BasePageSplitter(ABC):
                 page_numbers=[], page_contents={}
             )
 
-        # 页面内容已经是PageContent对象，直接使用
+        # 页面内容已经是PageContent对象，直接使用，并按键值排序
         pydantic_page_contents = page_contents
+        def _key_sort(k):
+            try:
+                # 优先按数字排序（支持字符串数字）
+                if isinstance(k, int):
+                    return (0, k)
+                if isinstance(k, str) and k.isdigit():
+                    return (0, int(k))
+            except Exception:
+                pass
+            # 非数字键按字符串小写排序，置于数字键之后
+            return (1, str(k).lower())
+
+        ordered_keys = sorted(list(pydantic_page_contents.keys()), key=_key_sort)
+        ordered_page_contents = {k: pydantic_page_contents[k] for k in ordered_keys}
 
         # 创建结果对象
         result = PageNumberExtractionResult(
             page_numbers=sorted(list(set(page_numbers))),
-            page_contents=pydantic_page_contents,
+            page_contents=ordered_page_contents,
         )
 
         return result

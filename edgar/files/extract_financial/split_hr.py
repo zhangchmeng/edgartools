@@ -37,6 +37,8 @@ class HRPageSplitter(BasePageSplitter):
         for hr in hr_tags:
             # 查找HR标签前面的页码信息
             page_number = self._find_page_number_before_hr(hr)
+            if prev_number == 0 and page_number > 3:
+                continue
 
             if page_number:
                 if page_number > prev_number:
@@ -216,6 +218,7 @@ if __name__ == "__main__":
         print(f"   找到页码: {hr_results.page_numbers}")
         print(f"   总页码数: {len(hr_results.page_numbers)}")
         print(f"   页面内容数: {len(hr_results.page_contents)}")
+        import pdb;pdb.set_trace()
 
     except FileNotFoundError:
         print(f"错误: 找不到文件 {html_file_path}")

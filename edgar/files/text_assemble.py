@@ -1,6 +1,6 @@
 import time
 import logging
-import os
+import re
 from typing import List, Dict, Tuple, Any, Optional, Set
 
 try:
@@ -10,12 +10,6 @@ try:
 except ImportError:
     BS4_AVAILABLE = False
     Tag = None
-
-from edgar.files.html_documents import (
-    HtmlDocument,
-    clean_html_root,
-    decompose_page_numbers,
-)
 
 from edgar.files.html_documents import (
     HtmlDocument,
@@ -96,6 +90,7 @@ class AssembleText:
     def clean_and_assemble_text(
         start_element: Tag, markdown: bool = False
     ) -> str:
+        start_element = clean_html_root(start_element)
         # Now find the full text
         blocks: List[Block] = extract_and_format_content(start_element)
         # Compress the blocks
@@ -228,11 +223,9 @@ class AssembleText:
                 if elem_name:
                     name_elements[elem_name] = elem
 
+        link_element_list = []
         with time_section("create_ordered_links"):
             # 创建基于文档位置的有序链接点列表
-            ordered_links = []
-
-            # 预分配足够大小的列表
             ordered_links = []
 
             for name, link_id in link_points:
@@ -241,6 +234,7 @@ class AssembleText:
                     link_id
                 )
                 if element:
+                    link_element_list.append(element)
                     ordered_links.append((name, link_id, element))
 
             # 优化：使用更高效的位置估算方法
@@ -275,6 +269,8 @@ class AssembleText:
                 else:
                     key = name
 
+                # if key == ('part i', 'Item 3'):
+                #     import pdb;pdb.set_trace()
                 # 确定本节的边界
                 start_element = element
                 end_element = (
@@ -295,9 +291,14 @@ class AssembleText:
                 elements_to_process = [start_element]  # 临时存储需要处理的元素
 
                 # 第一阶段：收集所有可能的内容元素（不包含 end_link 本身）
+                # 下一个link的父元素也不应该直接添加，而是需要逐个查看子元素处理
+                jump_elements = [one for one in end_element.parents]  if hasattr(end_element, "parents") else []
+
                 while current and current != end_element:
                     # 只包含有意义的内容元素
-                    if AssembleText.is_content_element(current):
+                    if current in jump_elements:
+                        pass
+                    elif AssembleText.is_content_element(current):
                         # 获取元素的文本内容
                         elem_content = (
                             current.get_text().strip()
@@ -315,7 +316,7 @@ class AssembleText:
 
                     # 移动到下一个元素
                     next_elem = current.next_element
-                    if not next_elem or next_elem == end_element:
+                    if not next_elem or next_elem in link_element_list:
                         break
                     current = next_elem
 
@@ -402,7 +403,7 @@ class AssembleText:
         results = {}
         for key, value in content_by_link.items():
             results[key] = AssembleText.assemble_html_document(value)
-    
+
         if not any("signature" in str(key).lower() for key in content_by_link.keys()):
             last_item = ordered_links[-1]
             last_item_name = last_item[0] if isinstance(last_item, tuple) else last_item[0]
@@ -429,6 +430,105 @@ class AssembleText:
                 else:
                     results[("extracted", "signature")] = ""
 
+        results = AssembleText.re_regular_content(results, ordered_links)
+        return results
+    
+    @staticmethod
+    def re_regular_content(results, ordered_links):
+        """ Check and fix unreasonable item segmentation results """
+        # 处理 1.第一个item缺失链接问题 2.链接指向页码，导致多个短item都合并到当前页码的第一个item中
+        # 1. 确认切分关键字 默认顺序为：SIGNATURES(不包含)/
+        # 2. 确认第一个item的内容 并将切割后的值附加到当前item
+        # 3. 对于每个其他item的最后20个非空行检查，行开头是否为item，是否应该切分到标准item中
+            # 顺序按照标准 item顺序/link传入顺序 划分
+
+        first_item = ordered_links[0][0]
+        item0_keys = ("extracted", "Item 0")
+
+        item0_content = results[item0_keys]
+        # 找到 开头为Signature的行，并将文本切分为包含Signature的文本和剩余文本两部分
+        # 上半部分填入results[item0_keys]， 剩余文本附加到 results[first_item]
+    
+        # Step 1/2: 处理 Item 0 中的 SIGNATURES 切分
+        if isinstance(item0_content, str) and item0_content.strip():
+            lines = item0_content.splitlines()
+            sig_index = None
+            for idx, ln in enumerate(lines):
+                up = ln.strip().upper()
+                if up.startswith("SIGNATURES") or up.startswith("SIGNATURE"):
+                    sig_index = idx
+                    break
+            if sig_index is not None:
+                # 从签名行的下一行开始切分，签名行保留在 Item 0
+                if len(lines) > sig_index+1:
+                    before = "\n".join(lines[: sig_index + 1]).strip()
+                    after = "\n".join(lines[sig_index + 1 :]).strip()
+                    results[item0_keys] = before
+                    # 将 after 追加到第一个 item 的内容中
+                    if after:
+                        if first_item in results and isinstance(results[first_item], str):
+                            appended = (after + "\n" + results[first_item]).strip()
+                            results[first_item] = appended
+                        else:
+                            results[first_item] = after
+
+        # Step 3: 按 ordered_links 顺序检查每个条目的末尾，若出现下一个条目的标题则切分并归并到对应条目
+        """
+        根据 ordered_links 顺序逐个处理，查找行开头为下一个 item 名称的行，对内容切分并处理。
+        例如：('part i','Item 1') 的尾部若出现 'Item 2' 开头行，则将尾部移到 ('part i','Item 2')。
+        """
+        # 构造有序的键序列
+
+        ordered_names = [nm for (nm, _lid, _el) in ordered_links]
+
+        # import pdb;pdb.set_trace()
+        for idx in range(len(ordered_names) - 1):
+            curr_key = ordered_names[idx]
+            next_key = ordered_names[idx + 1]
+
+            # 当前内容必须存在且为字符串
+            curr_val = results.get(curr_key)
+            if not isinstance(curr_val, str) or not curr_val.strip():
+                continue
+
+            # 取下一个条目的标签文本（用于匹配行首）
+            if isinstance(next_key, (list, tuple)) and len(next_key) >= 2:
+                next_label = str(next_key[1]).strip()
+            else:
+                next_label = str(next_key).strip()
+
+            # 仅在 next_label 非空时尝试匹配
+            if not next_label:
+                continue
+
+            if next_label.lower() == "item 1":
+                import pdb;pdb.set_trace()
+
+            # 取最后 20 个非空行，定位可能出现的下一个条目标题
+            lines = [ln for ln in curr_val.splitlines() if ln.strip()]
+            tail = lines[-30:] if len(lines) > 30 else lines
+
+            # 构造以 next_label 开头的匹配，忽略大小写，允许后续标点或空白
+            match_idx = None
+            pattern = rf"^{re.escape(next_label)}(?:\b|\s|[\.|:;\-–—])"
+            for i, ln in enumerate(tail):
+                if re is not None and re.match(pattern, ln.strip(), flags=re.IGNORECASE):
+                    match_idx = len(lines) - len(tail) + i
+                    break
+
+            # 未匹配则跳过当前条目
+            if match_idx is None:
+                continue
+
+            # 执行切分：当前条目保留前半部分，尾部移交给下一个条目
+            before = "\n".join(lines[:match_idx-1]).strip()
+            after = "\n".join(lines[match_idx-1:]).strip()
+
+            results[curr_key] = before
+            if next_key in results and isinstance(results[next_key], str):
+                results[next_key] = (after + "\n" + results[next_key] ).strip()
+            else:
+                results[next_key] = after
         return results
 
     @staticmethod
@@ -526,3 +626,4 @@ if __name__ == "__main__":
         for key, value in result.items():
             print(f"项目: {key}, 内容长度: {len(value)} 字符")
             print(AssembleText.assemble_html_document(value))
+

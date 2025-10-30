@@ -86,6 +86,7 @@ def group_items_by_structure(item_result: Dict[Any, str], structure) -> Tuple[Di
 
     return result, item_to_part
 
+
 class ParsedHtml10K(BaseHtmlParser):
     @staticmethod
     def extract_element_id(href: str) -> str:
@@ -201,7 +202,29 @@ class ParsedHtml10K(BaseHtmlParser):
             "Item 16": "Item 16.",
             "Signature": "Signature",
         }
-        items_match_0 = {key: key for key in items_match_1}
+        items_match_0 = {  # Match items starting with these patterns
+            "Item 1A": "Item 1A",
+            "Item 1B": "Item 1B",
+            "Item 1C": "Item 1C",
+            "Item 2": "Item 2",
+            "Item 3": "Item 3",
+            "Item 4": "Item 4",
+            "Item 5": "Item 5",
+            "Item 6": "Item 6",
+            "Item 7A": "Item 7A",
+            "Item 8": "Item 8",
+            "Item 9A": "Item 9A",
+            "Item 9B": "Item 9B",
+            "Item 9C": "Item 9C",
+            "Item 10": "Item 10",
+            "Item 11": "Item 11",
+            "Item 12": "Item 12",
+            "Item 13": "Item 13",
+            "Item 14": "Item 14",
+            "Item 15": "Item 15",
+            "Item 16": "Item 16",
+            "Signature": "Signature",
+        }
         items_match_2 = {  # Exact match after stripping whitespace
             "Item 1": "Part I, Item 1",
             "Item 1A": "Part I, Item 1A",
@@ -407,9 +430,9 @@ class ParsedHtml10K(BaseHtmlParser):
                 # If item has been processed, skip subsequent matching
                 if item_name in processed_items:
                     continue
-
                 for one_table_link in link_info:
                     for cell in one_table_link["text"]:
+                        cell = re.sub(r"\s+", " ", cell)
                         if match_function(cell, match_text):
                             # Handle both old format (single "link") and new format (multiple "links")
                             if "links" in one_table_link:
@@ -514,14 +537,16 @@ class ParsedHtml10K(BaseHtmlParser):
     def extract_html(
         self, html_content: str, structure, markdown: bool = False, form_type: str = "10-K"
     ) -> Dict[str, Any]:
-        extract_res = extract_financial_statement(html_content)
-        financal_elements_content = ""
-        if extract_res.success:
-            financal_elements = extract_res.page_contents_elements
-            financal_elements_content = AssembleText.assemble_html_document(financal_elements)
-            soup_obj = extract_res.soup
-            if soup_obj is not None and len(soup_obj.get_text()) > 20000:
-                html_content = str(soup_obj)
+        # extract_res = extract_financial_statement(html_content)
+        # financal_elements_content = ""
+        # # AssembleText.assemble_html_document(extract_res.page_contents[1])
+        # # AssembleText.assemble_html_document(financal_elements[0])
+        # if extract_res.success:
+        #     financal_elements = extract_res.page_contents_elements
+        #     financal_elements_content = AssembleText.assemble_html_document(financal_elements)
+        #     soup_obj = extract_res.soup
+        #     if soup_obj is not None and len(soup_obj.get_text()) > 20000:
+        #         html_content = str(soup_obj)
 
         index_table = self.extract_html_link_info(html_content)
         index_table = self._priority_index_table(index_table)
@@ -541,9 +566,9 @@ class ParsedHtml10K(BaseHtmlParser):
         # 使用通用结构化分发函数，将条目严格对齐到 structure，并执行子项合并
         result, item_to_part = group_items_by_structure(item_result, structure)
 
-        if financal_elements_content:
-            result.setdefault("part ii", {}).setdefault("item 8", "")
-            result["part ii"]["item 8"] += financal_elements_content
+        # if financal_elements_content:
+        #     result.setdefault("part ii", {}).setdefault("item 8", "")
+        #     result["part ii"]["item 8"] += financal_elements_content
 
         # if len(result.get("part ii", {}).get("item 8", "")) < 20000 and len(result.get("part iv", {}).get("item 15", "")) < 20000:
         if len(result.get("part iv", {}).get("item 16", "")) > 10000 or len(result.get("extracted", {}).get("signature", "")) > 10000:
@@ -571,10 +596,10 @@ class ParsedHtml10K(BaseHtmlParser):
             # result["extracted"]["signature"]
             if candidate_text:
                 financial_statement_patterns = [
-                    r"CONSOLIDATED\s+FINANCIAL\s+STATEMENTS",
-                    r"COMBINED\s+FINANCIAL\s+STATEMENTS", 
-                    r"CONDENSED\s+CONSOLIDATED\s+FINANCIAL\s+STATEMENTS",
-                    r"CONDENSED\s+COMBINED\s+FINANCIAL\s+STATEMENTS",
+                    # r"CONSOLIDATED\s+FINANCIAL\s+STATEMENTS",
+                    # r"COMBINED\s+FINANCIAL\s+STATEMENTS", 
+                    # r"CONDENSED\s+CONSOLIDATED\s+FINANCIAL\s+STATEMENTS",
+                    # r"CONDENSED\s+COMBINED\s+FINANCIAL\s+STATEMENTS",
                     r"FINANCIAL\s+STATEMENTS",
                 ]
                 
@@ -655,6 +680,8 @@ class ParsedHtml10Q(BaseHtmlParser):
             return []
         
         link_info = [item for sublist in link_info for item in sublist]
+        for one_link in link_info:
+            one_link["text"] = [re.sub(r"\s+", " ", one_cell) for one_cell in one_link["text"]]
 
         # 10-Q specific item patterns
         items_match_1 = {  # Standard 10-Q item formats
@@ -672,6 +699,24 @@ class ParsedHtml10Q(BaseHtmlParser):
                 "Item 4": "Item 4.",
                 "Item 5": "Item 5.",
                 "Item 6": "Item 6.",
+            },
+            "extracted": {"Signature": "Signature"},
+        }
+
+        items_match_0 = {  # Standard 10-Q item formats
+            "part i": {
+                "Item 1": "Item 1",
+                "Item 2": "Item 2",
+                "Item 3": "Item 3",
+                "Item 4": "Item 4",
+            },
+            "part ii": {
+                "Item 1A": "Item 1A",
+                "Item 2": "Item 2",
+                "Item 3": "Item 3",
+                "Item 4": "Item 4",
+                "Item 5": "Item 5",
+                "Item 6": "Item 6",
             },
             "extracted": {"Signature": "Signature"},
         }
@@ -737,16 +782,19 @@ class ParsedHtml10Q(BaseHtmlParser):
             ),
             (items_match_2, lambda x, y: x.strip().lower() == y.lower()),
             (items_match_2_1, lambda x, y: x.strip().lower() == y.lower()),
+            (
+                items_match_0,
+                lambda x, y: x.strip().lower().startswith(y.lower()),
+            ),
             (items_match_3, lambda x, y: y.lower() in x.lower()),
             # (items_match_4, lambda x, y: x.strip().lower().startswith(y.lower())),
         ]
 
         # Process matches and ensure unique items
         item_dict = {}
-        
-        for one_link in link_info:
-            for match_map, match_function in match_function_map:
-                for part in match_map:
+        for match_map, match_function in match_function_map:
+            for part in match_map:
+                for one_link in link_info:
                     for item_name, match_text in match_map[part].items():
                         for cell in one_link["text"]:
                             if match_function(cell, match_text):
@@ -762,9 +810,7 @@ class ParsedHtml10Q(BaseHtmlParser):
                                         "Legal Proceedings", "Risk Factors", "Unregistered Sales",
                                         "Defaults Upon Senior", "Mine Safety", "Other Information", "Exhibits"
                                     ]
-                                    
                                     text_content = " ".join(one_link["text"]).lower()
-                                    
                                     if any(indicator.lower() in text_content for indicator in part_i_indicators):
                                         link_part = "part i"
                                     elif any(indicator.lower() in text_content for indicator in part_ii_indicators):
@@ -854,6 +900,7 @@ class ParsedHtml10Q(BaseHtmlParser):
         item_result = AssembleText.assemble_items(
             html_content, item_links, markdown=markdown
         )
+        # item_result[('part i', 'Item 3')]
         # 规范化结构：将 {('part i','Item 1'): value, ...} 转为
         # {"part i": {"Item 1": value, ...}, "part ii": {...}, "extracted": {...}}
         result: Dict[str, Dict[str, Any]] = {
@@ -902,6 +949,38 @@ class ParsedHtml20F(ParsedHtml10K):
             return []
             
         link_info = [item for sublist in link_info for item in sublist]
+        items_match_0 = {  # Match items starting with these patterns (20-F)
+            "Item 1": "Item 1",
+            "Item 2": "Item 2",
+            "Item 3": "Item 3",
+            "Item 4A": "Item 4A",
+            "Item 5": "Item 5",
+            "Item 6": "Item 6",
+            "Item 7": "Item 7",
+            "Item 8": "Item 8",
+            "Item 9": "Item 9",
+            "Item 10": "Item 10",
+            "Item 11": "Item 11",
+            "Item 12": "Item 12",
+            "Item 13": "Item 13",
+            "Item 14": "Item 14",
+            "Item 15": "Item 15",
+            "Item 16A": "Item 16A",
+            "Item 16B": "Item 16B",
+            "Item 16C": "Item 16C",
+            "Item 16D": "Item 16D",
+            "Item 16E": "Item 16E",
+            "Item 16F": "Item 16F",
+            "Item 16G": "Item 16G",
+            "Item 16H": "Item 16H",
+            "Item 16I": "Item 16I",
+            "Item 16J": "Item 16J",
+            "Item 16K": "Item 16K",
+            "Item 17": "Item 17",
+            "Item 18": "Item 18",
+            "Item 19": "Item 19",
+            "Signature": "Signature",
+        }
 
         items_match_1 = {  # Match items starting with these patterns (20-F)
             "Item 1": "Item 1.",
@@ -930,11 +1009,13 @@ class ParsedHtml20F(ParsedHtml10K):
             "Item 16H": "Item 16H.",
             "Item 16I": "Item 16I.",
             "Item 16J": "Item 16J.",
+            "Item 16K": "Item 16K.",
             "Item 17": "Item 17.",
             "Item 18": "Item 18.",
             "Item 19": "Item 19.",
             "Signature": "Signature",
         }
+
         items_match_1_1 = {  # Match items starting with these patterns (20-F)
             "Item 1": "Item 1:",
             "Item 2": "Item 2:",
@@ -962,6 +1043,7 @@ class ParsedHtml20F(ParsedHtml10K):
             "Item 16H": "Item 16H:",
             "Item 16I": "Item 16I:",
             "Item 16J": "Item 16J:",
+            "Item 16K": "Item 16K:",
             "Item 17": "Item 17:",
             "Item 18": "Item 18:",
             "Item 19": "Item 19:",
@@ -995,6 +1077,7 @@ class ParsedHtml20F(ParsedHtml10K):
             "Item 16H": "Part II, Item 16H",
             "Item 16I": "Part II, Item 16I",
             "Item 16J": "Part II, Item 16J",
+            "Item 16K": "Part II, Item 16K",
             "Item 17": "Part III, Item 17",
             "Item 18": "Part III, Item 18",
             "Item 19": "Part III, Item 19",
@@ -1027,6 +1110,7 @@ class ParsedHtml20F(ParsedHtml10K):
             "Item 16H": "Item No. 16H",
             "Item 16I": "Item No. 16I",
             "Item 16J": "Item No. 16J",
+            "Item 16K": "Item No. 16K",
             "Item 17": "Item No. 17",
             "Item 18": "Item No. 18",
             "Item 19": "Item No. 19",
@@ -1058,6 +1142,7 @@ class ParsedHtml20F(ParsedHtml10K):
             "Item 16H": "Part II. Item 16H",
             "Item 16I": "Part II. Item 16I",
             "Item 16J": "Part II. Item 16J",
+            "Item 16K": "Part II. Item 16K",
             "Item 17": "Part III. Item 17",
             "Item 18": "Part III. Item 18",
             "Item 19": "Part III. Item 19",
@@ -1090,6 +1175,7 @@ class ParsedHtml20F(ParsedHtml10K):
             "Item 16H": "Part II. Item 16H.",
             "Item 16I": "Part II. Item 16I.",
             "Item 16J": "Part II. Item 16J.",
+            "Item 16K": "Part II. Item 16K.",
             "Item 17": "Part III. Item 17.",
             "Item 18": "Part III. Item 18.",
             "Item 19": "Part III. Item 19.",
@@ -1119,10 +1205,11 @@ class ParsedHtml20F(ParsedHtml10K):
             "Item 16D": "Exemptions from the Listing Standards for Audit Committees",
             "Item 16E": "Purchases of Equity Securities by the Issuer and Affiliated Purchasers",
             "Item 16F": "Change in Registrant's Certifying Accountant",
-            "Item 16G": "Mine Safety Disclosure",
-            "Item 16H": "Disclosure Regarding Foreign Jurisdictions That Prevent Inspections",
-            "Item 16I": "Insider Trading Policies",
-            "Item 16J": "Cybersecurity",
+            "Item 16G":  "Corporate Governance",
+            "Item 16H": "Mine Safety Disclosure",
+            "Item 16I": "Disclosure Regarding Foreign Jurisdictions That Prevent Inspections",
+            "Item 16J": "Insider Trading Policies",
+            "Item 16K": "Cybersecurity",
             "Item 17": "Financial Statements",
             "Item 18": "Financial Statements",
             "Item 19": "Exhibits",
@@ -1157,10 +1244,11 @@ class ParsedHtml20F(ParsedHtml10K):
             "Item 16D": "16D. Exemptions from the Listing Standards for Audit Committees",
             "Item 16E": "16E. Purchases of Equity Securities by the Issuer and Affiliated Purchasers",
             "Item 16F": "16F. Change in Registrant's Certifying Accountant",
-            "Item 16G": "16G. Mine Safety Disclosure",
-            "Item 16H": "16H. Disclosure Regarding Foreign Jurisdictions That Prevent Inspections",
-            "Item 16I": "16I. Insider Trading Policies",
-            "Item 16J": "16J. Cybersecurity",
+            "Item 16G": "16G. Corporate Governance",
+            "Item 16H": "16H. Mine Safety Disclosure",
+            "Item 16I": "16I. Disclosure Regarding Foreign Jurisdictions That Prevent Inspections",
+            "Item 16J": "16J. Insider Trading Policies",
+            "Item 16K": "16K. Cybersecurity",
             "Item 17": "17. Financial Statements",
             "Item 18": "18. Financial Statements",
             "Item 19": "19. Exhibits",
@@ -1185,7 +1273,6 @@ class ParsedHtml20F(ParsedHtml10K):
                 items_match_6,
                 lambda x, y: x.strip().lower().startswith(y.lower()),
             ),
-            (items_match_0, lambda x, y: x.strip().lower() == y.lower()),
             (
                 items_match_1,
                 lambda x, y: x.strip().lower().startswith(y.lower()),
@@ -1197,6 +1284,7 @@ class ParsedHtml20F(ParsedHtml10K):
             (items_match_2, lambda x, y: x.strip().lower() == y.lower()),
             (items_match_2_1, lambda x, y: x.strip().lower() == y.lower()),
             (items_match_2_2, lambda x, y: x.strip().lower() == y.lower()),
+            (items_match_0, lambda x, y: x.strip().lower() == y.lower()),
             (items_match_2_3, lambda x, y: x.strip().lower() == y.lower()),
             (items_match_3, lambda x, y: y.lower() in x.lower()),
             (items_match_5, lambda x, y: y.lower() in x.lower()),
@@ -1219,6 +1307,8 @@ class ParsedHtml20F(ParsedHtml10K):
 
                 for one_table_link in link_info:
                     for cell in one_table_link["text"]:
+
+                        cell = re.sub(r"\s+", " ", cell)
                         if match_function(cell, match_text):
                             # Handle both old format (single "link") and new format (multiple "links")
                             if "links" in one_table_link:
@@ -1274,14 +1364,13 @@ class ParsedHtml20F(ParsedHtml10K):
     def extract_html(
         self, html_content: str, structure, markdown: bool = False, form_type: str = "10-K"
     ) -> Dict[str, Any]:
-        extract_res = extract_financial_statement(html_content)
-        financal_elements_content = ""
-        if extract_res.success:
-            financal_elements = extract_res.page_contents_elements
-            financal_elements_content = AssembleText.assemble_html_document(financal_elements)
-            if len(extract_res.soup.get_text()) > 20000:
-                html_content = str(extract_res.soup)
-
+        # extract_res = extract_financial_statement(html_content)
+        # financal_elements_content = ""
+        # if extract_res.success:
+        #     financal_elements = extract_res.page_contents_elements
+        #     financal_elements_content = AssembleText.assemble_html_document(financal_elements)
+        #     if len(extract_res.soup.get_text()) > 20000:
+        #         html_content = str(extract_res.soup)
         index_table = self.extract_html_link_info(html_content)
         index_table = self._priority_index_table(index_table)
         raw_item_links = self.extract_item_and_split(index_table)
@@ -1317,14 +1406,14 @@ class ParsedHtml20F(ParsedHtml10K):
                 target_key = "item 18" if (len(item18_val) >= len(item17_val) and "item 18" in allowed_candidates) else "item 17"
             else:
                 target_key = "item 18" if "item 18" in allowed_candidates else "item 17"
-        # 附加内容：若没有允许的目标项则写入 extracted，避免破坏与 structure 的一致性
-        if financal_elements_content:
-            if target_key:
-                part.setdefault(target_key, "")
-                part[target_key] += financal_elements_content
-            else:
-                result.setdefault("extracted", {}).setdefault("item 18", "")
-                result["extracted"]["item 18"] += financal_elements_content
+        # # 附加内容：若没有允许的目标项则写入 extracted，避免破坏与 structure 的一致性
+        # if financal_elements_content:
+        #     if target_key:
+        #         part.setdefault(target_key, "")
+        #         part[target_key] += financal_elements_content
+        #     else:
+        #         result.setdefault("extracted", {}).setdefault("item 18", "")
+        #         result["extracted"]["item 18"] += financal_elements_content
                 
         # if len(result.get("part ii", {}).get("item 8", "")) < 20000 and len(result.get("part iv", {}).get("item 15", "")) < 20000:
         if len(result.get("part iii", {}).get("item 19", "")) > 10000 or len(result.get("extracted", {}).get("signature", "")) > 10000:
@@ -1354,10 +1443,10 @@ class ParsedHtml20F(ParsedHtml10K):
                 # 添加更多的匹配规则 Combined Financial Statements
                 # 匹配各种形式的财务报表标题
                 financial_statement_patterns = [
-                    r"CONSOLIDATED\s+FINANCIAL\s+STATEMENTS",
-                    r"COMBINED\s+FINANCIAL\s+STATEMENTS", 
-                    r"CONDENSED\s+CONSOLIDATED\s+FINANCIAL\s+STATEMENTS",
-                    r"CONDENSED\s+COMBINED\s+FINANCIAL\s+STATEMENTS",
+                    # r"CONSOLIDATED\s+FINANCIAL\s+STATEMENTS",
+                    # r"COMBINED\s+FINANCIAL\s+STATEMENTS", 
+                    # r"CONDENSED\s+CONSOLIDATED\s+FINANCIAL\s+STATEMENTS",
+                    # r"CONDENSED\s+COMBINED\s+FINANCIAL\s+STATEMENTS",
                     r"FINANCIAL\s+STATEMENTS",
                 ]
 
@@ -1379,3 +1468,13 @@ class ParsedHtml20F(ParsedHtml10K):
                     result.setdefault("part iii", {}).setdefault(target_key, "")
                     result["part iii"][target_key] += "\n" + tail.strip()
         return result
+
+
+
+if __name__ == "__main__":
+    from edgar.company_reports import TwentyF
+    content_path = '/Users/chenghao.zhang/Documents/secfile/extract_financial/f20.html'
+    with open(content_path, "r", encoding="utf-8") as f:
+        html_content = f.read()
+    ParsedHtml20F().extract_html(html_content=html_content, structure=TwentyF.structure)
+

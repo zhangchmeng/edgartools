@@ -86,6 +86,7 @@ class ContainerPageSplitter(BasePageSplitter):
             )
 
             if page_elements:
+                prev_container.extract()
                 # 创建页面内容对象
                 page_content = self._create_page_content(
                     page_number, page_elements
@@ -95,7 +96,6 @@ class ContainerPageSplitter(BasePageSplitter):
                 # 添加到页码列表
                 if page_number not in page_numbers:
                     page_numbers.append(page_number)
-
             prev_container = container
 
         return self._create_standard_result(page_numbers, page_contents), soup

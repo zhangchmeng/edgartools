@@ -825,9 +825,9 @@ class BaseHtmlParser:
             table_count_map[table_index] = table_item_count
 
         # 将 table_item_count <= 1 的 table 移到末尾；若所有 table 均 <= 1 则不处理
-        if table_count_map and (max(table_count_map.values()) > 1):
-            greater = [t for i, t in enumerate(tables) if table_count_map.get(i, 0) > 1]
-            less_eq = [t for i, t in enumerate(tables) if table_count_map.get(i, 0) <= 1]
+        if table_count_map and (max(table_count_map.values()) > 0):
+            greater = [t for i, t in enumerate(tables) if table_count_map.get(i, 0) > 0]
+            less_eq = [t for i, t in enumerate(tables) if table_count_map.get(i, 0) < 1]
             tables = greater + less_eq
         return tables
 

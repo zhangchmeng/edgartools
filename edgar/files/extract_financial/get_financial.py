@@ -127,7 +127,7 @@ def _create_error_result(error_message: str) -> FinancialStatementExtractionResu
 if __name__ == "__main__":
     # 测试extract_financial_statement函数
     # html_file_path = "/Users/chenghao.zhang/Documents/secfile/edgar/0000908311-25-000017.html"
-    html_file_path = "/Users/chenghao.zhang/Documents/secfile/edgar/000164117225023248.html"
+    html_file_path = "/Users/chenghao.zhang/Documents/secfile/extract_financial/test.html"
     
     try:
         # 读取HTML文件
