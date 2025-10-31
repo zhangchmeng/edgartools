@@ -1,7 +1,7 @@
 import re
 from typing import List, Dict, Optional, Any, Tuple
 import logging
-from edgar.files.base_parser import BaseHtmlParser
+from edgar.files.base_parser import BaseHtmlParser, replace_space
 from edgar.files.text_assemble import AssembleText
 from edgar.files.timeout_utils import monitor_performance
 # from edgar.files.extract_item_ai import extract_items_with_ai
@@ -432,7 +432,7 @@ class ParsedHtml10K(BaseHtmlParser):
                     continue
                 for one_table_link in link_info:
                     for cell in one_table_link["text"]:
-                        cell = re.sub(r"\s+", " ", cell)
+                        cell = replace_space(cell)
                         if match_function(cell, match_text):
                             # Handle both old format (single "link") and new format (multiple "links")
                             if "links" in one_table_link:
@@ -797,6 +797,7 @@ class ParsedHtml10Q(BaseHtmlParser):
                 for one_link in link_info:
                     for item_name, match_text in match_map[part].items():
                         for cell in one_link["text"]:
+                            cell = replace_space(cell)
                             if match_function(cell, match_text):
                                 link = one_link["link"]
                                 # 如果没有part信息，则根据匹配的内容推断part
@@ -879,7 +880,7 @@ class ParsedHtml10Q(BaseHtmlParser):
     ) -> Dict[str, Any]:
         """Extract 10-Q items from HTML content, handling same item numbers in different parts."""
         index_table = self.extract_html_link_info(html_content)
-
+        
         if self.check_10q_index_table(index_table):
             index_table = self._priority_index_table(index_table)
             item_links = self.extract_item_and_split(index_table)
@@ -1307,8 +1308,7 @@ class ParsedHtml20F(ParsedHtml10K):
 
                 for one_table_link in link_info:
                     for cell in one_table_link["text"]:
-
-                        cell = re.sub(r"\s+", " ", cell)
+                        cell = replace_space(cell)
                         if match_function(cell, match_text):
                             # Handle both old format (single "link") and new format (multiple "links")
                             if "links" in one_table_link:

@@ -16,6 +16,7 @@ from edgar.files.html_documents import (
     TableBlock,
     clean_html_root,
     decompose_page_numbers,
+    merge_empty_div_elements,
     extract_and_format_content,
     Block,
     LinkBlock,
@@ -170,6 +171,7 @@ class AssembleText:
         root: Tag = HtmlDocument.get_root(html_content)
         start_element = clean_html_root(root)
         decompose_page_numbers(start_element)
+        merge_empty_div_elements(start_element)
         soup = start_element
 
         if not soup:
@@ -429,6 +431,9 @@ class AssembleText:
                     results[last_item_name] = before_sig.strip()
                 else:
                     results[("extracted", "signature")] = ""
+        if ('part i', 'Item 1') in [one[0] for one in item_links]:
+            if ('part i', 'Item 1')  not in [one[0] for one in ordered_links]:
+                ordered_links.insert(0, (('part i', 'Item 1'), "", ""))
 
         results = AssembleText.re_regular_content(results, ordered_links)
         return results
@@ -458,6 +463,15 @@ class AssembleText:
                 if up.startswith("SIGNATURES") or up.startswith("SIGNATURE"):
                     sig_index = idx
                     break
+            # 如果没找到 SIGNATURES 且 item0_content 内容字符超过10000，使用	Exhibits进行分离
+            if sig_index is None and len(item0_content) > 10000:
+                sig_index = lines.index("EXHIBITS")
+                for idx, ln in enumerate(lines):
+                    up = ln.strip().upper()
+                    if up.startswith("EXHIBITS") or up.startswith("EXHIBIT"):
+                        sig_index = idx
+                        break
+
             if sig_index is not None:
                 # 从签名行的下一行开始切分，签名行保留在 Item 0
                 if len(lines) > sig_index+1:
@@ -501,12 +515,9 @@ class AssembleText:
             if not next_label:
                 continue
 
-            if next_label.lower() == "item 1":
-                import pdb;pdb.set_trace()
-
             # 取最后 20 个非空行，定位可能出现的下一个条目标题
             lines = [ln for ln in curr_val.splitlines() if ln.strip()]
-            tail = lines[-30:] if len(lines) > 30 else lines
+            tail = lines
 
             # 构造以 next_label 开头的匹配，忽略大小写，允许后续标点或空白
             match_idx = None
