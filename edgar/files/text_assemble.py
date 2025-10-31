@@ -463,9 +463,8 @@ class AssembleText:
                 if up.startswith("SIGNATURES") or up.startswith("SIGNATURE"):
                     sig_index = idx
                     break
-            # 如果没找到 SIGNATURES 且 item0_content 内容字符超过10000，使用	Exhibits进行分离
+            # 如果没找到 SIGNATURES 且 item0_content 内容字符超过10000，使用Exhibits进行分离
             if sig_index is None and len(item0_content) > 10000:
-                sig_index = lines.index("EXHIBITS")
                 for idx, ln in enumerate(lines):
                     up = ln.strip().upper()
                     if up.startswith("EXHIBITS") or up.startswith("EXHIBIT"):
@@ -517,13 +516,14 @@ class AssembleText:
 
             # 取最后 20 个非空行，定位可能出现的下一个条目标题
             lines = [ln for ln in curr_val.splitlines() if ln.strip()]
-            tail = lines
+            tail = lines[-30:] if len(lines) > 30 else lines
 
             # 构造以 next_label 开头的匹配，忽略大小写，允许后续标点或空白
             match_idx = None
             pattern = rf"^{re.escape(next_label)}(?:\b|\s|[\.|:;\-–—])"
             for i, ln in enumerate(tail):
                 if re is not None and re.match(pattern, ln.strip(), flags=re.IGNORECASE):
+                    # curr_key, next_key, ln, pattern
                     match_idx = len(lines) - len(tail) + i
                     break
 
