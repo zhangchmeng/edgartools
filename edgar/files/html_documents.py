@@ -964,7 +964,7 @@ def decompose_page_numbers(start_element: Tag):
                     .strip()
                     .replace("'", "")
                     .replace('"', "")
-                )
+                ) if font_family_match.group(1).strip() else None
             if font_size_match:
                 font_size = font_size_match.group(1).strip()
             if font_weight_match:
@@ -1187,7 +1187,7 @@ def fixup(text: str):
     # Replace HTML entity &nbsp; with regular spaces
     # Replace non-breaking spaces (\xa0) with regular spaces
     # Keep other whitespace as-is to preserve formatting
-    text = text.replace("\xa0", " ")
+    text = text.replace("\xa0", " ") if text else ""
     # Normalize multiple consecutive spaces to single space
     text = re.sub(r" +", " ", text)
 
@@ -1257,7 +1257,7 @@ def clean_html_root(root: Tag) -> Tag:
 
 def replace_inline_newlines(text: str):
     """Replace newlines inside the text container"""
-    text = text.replace("\n", " ")
+    text = text.replace("\n", " ") if text else ""
     return text
 
 
@@ -1277,7 +1277,7 @@ def fixup_soup(soup):
             continue
 
         # Otherwise create a new div and preserve all content
-        raw_content = str(pre)
+        raw_content = str(pre) or ""
         content = raw_content.replace("<pre>", "").replace("</pre>", "")
         new_soup = BeautifulSoup(f"<div>{content}</div>", "html.parser")
         pre.replace_with(new_soup.div)

@@ -278,7 +278,7 @@ class TenK(CompanyReport):
     @property
     @lru_cache(maxsize=1)
     def chunked_document(self):
-        return ChunkedDocumentSplitFinancial(self._filing.html(), prefix_src=self._filing.base_dir)
+        return ChunkedDocument(self._filing.html(), prefix_src=self._filing.base_dir)
     
     @lru_cache(maxsize=1)
     def id_parse_document(self, markdown:bool=False):
@@ -292,8 +292,10 @@ class TenK(CompanyReport):
         return ChunkedDocumentSplitFinancial(self._filing.html())
 
     def get_re_parse_res(self, markdown:bool=True):
-        financial_content = self.chunked_document_split_financial.assemble_financial_content(markdown=markdown)
-        part_item_res = self.chunked_document_split_financial.part_item_res(markdown=markdown)
+        # financial_content = self.chunked_document_split_financial.assemble_financial_content(markdown=markdown)
+        # part_item_res = self.chunked_document_split_financial.part_item_res(markdown=markdown)
+        financial_content = ""
+        part_item_res = self.chunked_document.part_item_res(markdown=markdown)
         # 合并被错误拆分到不同 Part 的相同 Item，统一归并到其规范 Part，并移除其它 Part 的重复项
         def _canonical_part_for_item(item_key: str):
             m = re.match(r'^\s*item\s+(\d+)', item_key, re.IGNORECASE)
@@ -608,7 +610,7 @@ class TenQ(CompanyReport):
     @property
     @lru_cache(maxsize=1)
     def chunked_document(self):
-        return ChunkedDocumentSplitFinancial(self._filing.html(), prefix_src=self._filing.base_dir)
+        return ChunkedDocument(self._filing.html(), prefix_src=self._filing.base_dir)
     
     def get_structure(self):
         # Create the main tree
@@ -819,12 +821,13 @@ class TwentyF(CompanyReport):
         return ChunkedDocumentSplitFinancial(self._filing.html())
 
     def get_re_parse_res(self, markdown:bool=True):
-        financial_content = self.chunked_document_split_financial.assemble_financial_content(markdown=markdown)
-        part_item_res = self.chunked_document_split_financial.part_item_res(markdown=markdown)
-        # 合并被错误拆分到不同 Part 的相同 Item，统一归并到其规范 Part，并移除其它 Part 的重复项
-        if financial_content:
-            if part_item_res.get("part iii") and part_item_res['part iii'].get("item 18"):
-                part_item_res['part iii']['item 18'] += financial_content
+        # financial_content = self.chunked_document_split_financial.assemble_financial_content(markdown=markdown)
+        # part_item_res = self.chunked_document_split_financial.part_item_res(markdown=markdown)
+        # # 合并被错误拆分到不同 Part 的相同 Item，统一归并到其规范 Part，并移除其它 Part 的重复项
+        # if financial_content:
+        #     if part_item_res.get("part iii") and part_item_res['part iii'].get("item 18"):
+        #         part_item_res['part iii']['item 18'] += financial_content
+        part_item_res = self.chunked_document.part_item_res(markdown=markdown)
         # 从以下两个模块中找出字符长度最长的模块，然后找出第一个能匹配到的字符
         # "CONSOLIDATED FINANCIAL STATEMENTS"（不区分大小写），将从该匹配处开始的内容附加到 item 8 中
         # 候选模块：result["extracted"]["signature"], result["part iv"]["item 16"]
