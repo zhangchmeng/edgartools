@@ -491,10 +491,8 @@ class AssembleText:
         例如：('part i','Item 1') 的尾部若出现 'Item 2' 开头行，则将尾部移到 ('part i','Item 2')。
         """
         # 构造有序的键序列
-
         ordered_names = [nm for (nm, _lid, _el) in ordered_links]
 
-        # import pdb;pdb.set_trace()
         for idx in range(len(ordered_names) - 1):
             curr_key = ordered_names[idx]
             next_key = ordered_names[idx + 1]
@@ -516,7 +514,7 @@ class AssembleText:
 
             # 取最后 20 个非空行，定位可能出现的下一个条目标题
             lines = [ln for ln in curr_val.splitlines() if ln.strip()]
-            tail = lines[-30:] if len(lines) > 30 else lines
+            tail = lines[-50:] if len(lines) > 50 else lines
 
             # 构造以 next_label 开头的匹配，忽略大小写，允许后续标点或空白
             match_idx = None
@@ -540,6 +538,56 @@ class AssembleText:
                 results[next_key] = (after + "\n" + results[next_key] ).strip()
             else:
                 results[next_key] = after
+
+        # 反向归还item内容
+        # 反向逻辑：从每个 item 的头 50 行判断是否有当前标题，
+        # 若存在，则将标题之前的内容归还给上一个 item
+        # 反向逻辑：从最后一个 item 开始逐步向上归还头部前言内容
+        for idx in range(len(ordered_names) - 1, 0, -1):
+            prev_key = ordered_names[idx - 1]
+            curr_key = ordered_names[idx]
+
+            curr_val = results.get(curr_key)
+            if not isinstance(curr_val, str) or not curr_val.strip():
+                continue
+
+            # 解析当前条目的标签文本（用于定位当前标题）
+            if isinstance(curr_key, (list, tuple)) and len(curr_key) >= 2:
+                curr_label = str(curr_key[1]).strip()
+            else:
+                curr_label = str(curr_key).strip()
+
+            if not curr_label:
+                continue
+
+            # 取前 50 个非空行，定位当前条目的标题
+            lines = [ln for ln in curr_val.splitlines() if ln.strip()]
+            head = lines[:50] if len(lines) > 50 else lines
+
+            match_idx = None
+            pattern_curr = rf"^{re.escape(curr_label)}(?:\b|\s|[\.|:;\-–—])"
+            for i, ln in enumerate(head):
+                if re is not None and re.match(pattern_curr, ln.strip(), flags=re.IGNORECASE):
+                    match_idx = i
+                    break
+
+            # 若在头部找到当前标题且其前面存在内容，则将其前内容归还给上一个条目
+            if match_idx is None or match_idx <= 0:
+                continue
+
+            before = "\n".join(lines[:match_idx]).strip()
+            after = "\n".join(lines[match_idx:]).strip()
+
+            if before:
+                # 更新当前条目内容为标题及其之后的部分
+                results[curr_key] = after
+
+                # 将 before 追加到上一个条目末尾
+                prev_val = results.get(prev_key)
+                if isinstance(prev_val, str) and prev_val.strip():
+                    results[prev_key] = (prev_val + "\n" + before).strip()
+                else:
+                    results[prev_key] = before
         return results
 
     @staticmethod

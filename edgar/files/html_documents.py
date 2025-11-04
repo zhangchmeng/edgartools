@@ -772,7 +772,7 @@ def extract_and_format_content(element) -> List[Block]:
             # Skip HTML comments to avoid including annotation text like "Field: Sequence" in output
             if isinstance(child, Comment):
                 continue
-            if child.name:
+            if child.name and child.name !='font':
                 blocks.extend(extract_and_format_content(child))
                 if (
                     not inline
@@ -1502,11 +1502,9 @@ def merge_header_rows(header_rows):
 
     return merged_header
 
-
 def is_numeric_or_financial(value):
     pattern = r"^[\$€£(-]?\s{0,2}\d"
     return bool(re.match(pattern, value.strip()))
-
 
 def determine_column_justification(all_processed_rows):
     max_cols = max(

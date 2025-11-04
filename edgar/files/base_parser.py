@@ -1,6 +1,6 @@
 import re
 import logging
-from typing import List, Dict, Optional, Any, Union
+from typing import List, Dict, Optional, Any, Tuple
 
 try:
     from bs4 import BeautifulSoup, Tag
@@ -299,7 +299,7 @@ class BaseHtmlParser:
         tables = soup.find_all("table")
 
         part_regex = (
-            re.compile(r"^\s*(Part\s+[IVXLC]+)\s*", re.IGNORECASE)
+            re.compile(r"^\s*(Part\s*[IVXLC]+)\s*", re.IGNORECASE)
             if use_part_detection
             else None
         )
@@ -313,9 +313,13 @@ class BaseHtmlParser:
             for row_idx, row in enumerate(rows):
                 if use_part_detection and part_regex:
                     row_text = row.get_text().strip()
+                    # 处理字符拼接导致的 "PARTI." -> "Part I."（自动插入空格）
+                    row_text = re.sub(r"(?i)\bpart([ivxlc]+)\b", r"Part \1", row_text)
                     part_match = part_regex.match(row_text)
                     if part_match:
-                        part = re.sub(r"\s+", " ", part_match.group(1).lower())
+                        raw_part = part_match.group(1).lower()
+                        raw_part = re.sub(r"(?i)\bpart\s*([ivxlc]+)\b", r"part \1", raw_part)
+                        part = re.sub(r"\s+", " ", raw_part)
 
                 cells = row.find_all("td", recursive=False)
 
@@ -412,7 +416,7 @@ class BaseHtmlParser:
         tables = soup.find_all("table")
 
         part_regex = (
-            re.compile(r"^\s*(Part\s+[IVXLC]+)\s*", re.IGNORECASE)
+            re.compile(r"^\s*(Part\s*[IVXLC]+)\s*", re.IGNORECASE)
             if use_part_detection
             else None
         )
@@ -428,9 +432,13 @@ class BaseHtmlParser:
                 #     import pdb;pdb.set_trace()
                 if use_part_detection and part_regex:
                     row_text = row.get_text().strip()
+                    # 处理字符拼接导致的 "PARTI." -> "Part I."（自动插入空格）
+                    row_text = re.sub(r"(?i)\bpart([ivxlc]+)\b", r"Part \1", row_text)
                     part_match = part_regex.match(row_text)
                     if part_match:
-                        part = re.sub(r"\s+", " ", part_match.group(1).lower())
+                        raw_part = part_match.group(1).lower()
+                        raw_part = re.sub(r"(?i)\bpart\s*([ivxlc]+)\b", r"part \1", raw_part)
+                        part = re.sub(r"\s+", " ", raw_part)
 
                 cells = row.find_all("td", recursive=False)
                 exist_page_num = False
@@ -676,9 +684,141 @@ class BaseHtmlParser:
 
             return []
 
+    def _group_divs_by_position(self, positioned_divs: List[Any]) -> List[List[Any]]:
+        """将按 top 排序的 div 列表按行分组（容差 5px）。"""
+        rows: List[List[Any]] = []
+        current_row: List[Any] = []
+        current_top: Optional[float] = None
+        tolerance = 5
+
+        for top_pos, div in positioned_divs:
+            if current_top is None or abs(top_pos - current_top) <= tolerance:
+                current_row.append(div)
+                current_top = top_pos
+            else:
+                if current_row:
+                    rows.append(current_row)
+                current_row = [div]
+                current_top = top_pos
+
+        if current_row:
+            rows.append(current_row)
+
+        return rows
+
+    def _process_div_rows(self, rows: List[List[Any]], use_part_detection: bool) -> List[Dict[str, Any]]:
+        """统一处理按行分组后的 div，提取文本与链接并生成结构化结果。"""
+        table_links: List[Dict[str, Any]] = []
+        part: Optional[str] = None
+        part_regex = (
+            re.compile(r"^\s*(Part\s*[IVXLC]+)\s*", re.IGNORECASE)
+            if use_part_detection
+            else None
+        )
+
+        for row_divs in rows:
+            has_links = any(getattr(div, "find", lambda *_: None)("a") for div in row_divs)
+
+            # 当该行没有链接时尝试解析 Part（仅在启用 part 检测时）
+            if not has_links:
+                if part_regex:
+                    row_text = " ".join(
+                        getattr(div, "get_text", lambda **_: "")(strip=True) for div in row_divs
+                    )
+                    # 处理字符拼接导致的 "PARTI." -> "Part I."（自动插入空格）
+                    row_text = re.sub(r"(?i)\bpart([ivxlc]+)\b", r"Part \1", row_text)
+                    part_match = part_regex.match(row_text)
+                    if part_match:
+                        raw_part = part_match.group(1).lower()
+                        raw_part = re.sub(r"(?i)\bpart\s*([ivxlc]+)\b", r"part \1", raw_part)
+                        part = re.sub(r"\s+", " ", raw_part)
+                continue
+
+            # 按 left 位置排序，再提取文本与链接
+            sorted_divs: List[Tuple[float, Any]] = []
+            for div in row_divs:
+                style = getattr(div, "get", lambda *_: "")("style", "")
+                left_match = re.search(r"left:(\d+(?:\.\d+)?)px", style)
+                if left_match:
+                    left_pos = float(left_match.group(1))
+                    sorted_divs.append((left_pos, div))
+
+            sorted_divs.sort(key=lambda x: x[0])
+
+            text_parts: List[str] = []
+            row_links: List[str] = []
+            page_texts: List[str] = []
+
+            for _left_pos, div in sorted_divs:
+                div_text = getattr(div, "get_text", lambda **_: "")(strip=True)
+
+                if div_text:
+                    if div_text.isdigit() or self._contains_page_numbers(div_text):
+                        page_texts.append(div_text)
+                    elif not self._contains_page_numbers(div_text):
+                        text_parts.append(div_text)
+
+                # 提取链接
+                for link in getattr(div, "find_all", lambda *_: [])("a"):
+                    href = getattr(link, "get", lambda *_: None)("href")
+                    if href and href.startswith("#"):
+                        row_links.append(href.split("#")[-1])
+
+            if row_links and text_parts:
+                # 过滤区间尾部链接
+                if page_texts:
+                    page_text = page_texts[0]
+                    link_texts = [
+                        getattr(link, "get_text", lambda **_: "")(strip=True)
+                        for div in row_divs
+                        for link in getattr(div, "find_all", lambda *_: [])("a")
+                        if getattr(link, "get_text", lambda **_: "")(strip=True)
+                    ]
+                    row_links = self._filter_range_end_links(page_text, row_links, link_texts)
+
+                # 10-Q：仅取首个链接；10-K：保留全部链接
+                if use_part_detection:
+                    first_link = row_links[0] if row_links else None
+                    if first_link:
+                        is_multi_section = self._is_multi_section_item(text_parts, row_links)
+                        entry: Dict[str, Any] = {
+                            "text": text_parts,
+                            "link": first_link,
+                            "is_multi_section": is_multi_section,
+                            "link_count": len(row_links),
+                        }
+                        if part:
+                            entry["part"] = part
+                        if "signature" in "".join(text_parts).lower():
+                            entry["part"] = "extracted"
+
+                        table_links.append(entry)
+
+                        if len(row_links) > 1:
+                            logging.info(
+                                f"Multi-section item detected in div (10Q): {text_parts[0] if text_parts else 'Unknown'} with {len(row_links)} links, using first link only"
+                            )
+                else:
+                    is_multi_section = self._is_multi_section_item(text_parts, row_links)
+                    table_links.append(
+                        {
+                            "text": text_parts,
+                            "links": row_links,
+                            "is_multi_section": is_multi_section,
+                            "link_count": len(row_links),
+                        }
+                    )
+
+                    if is_multi_section and len(row_links) > 1:
+                        logging.info(
+                            f"Multi-section item detected in div: {text_parts[0] if text_parts else 'Unknown'} with {len(row_links)} links"
+                        )
+
+        return table_links
+
     def _extract_div_links2(self, soup, use_part_detection: bool = False):
         """
-        查找包含多个 href=# 的元素，并将合适大小的元素处理，给出合理的判断元素边界的逻辑
+        Extract table of contents from div structure (fallback method)
         """
         if soup is None:
             return []
@@ -751,11 +891,8 @@ class BaseHtmlParser:
         for container in multi_link_containers:
             results_tables.extend(find_element_boundaries(container))
         
-        # 如果没有找到合适的容器，返回空结果
-        if not results_tables:
-            return []
-        
-        # 从 results_tables 中提取位置信息
+
+        # Get positioned divs and sort by top position
         positioned_divs = []
         for table in results_tables:
             for div in table.children:
@@ -778,147 +915,9 @@ class BaseHtmlParser:
         # 按位置排序
         positioned_divs.sort(key=lambda x: x[0])
         
-        # Group by rows with tolerance
-        rows = []
-        current_row = []
-        current_top = None
-        tolerance = 5
-
-        for top_pos, div in positioned_divs:
-            if current_top is None or abs(top_pos - current_top) <= tolerance:
-                current_row.append(div)
-                current_top = top_pos
-            else:
-                if current_row:
-                    rows.append(current_row)
-                current_row = [div]
-                current_top = top_pos
-
-        if current_row:
-            rows.append(current_row)
-
-        # Parse rows
-        table_links = []
-        part = None
-        part_regex = (
-            re.compile(r"^\s*(Part\s+[IVXLC]+)\s*", re.IGNORECASE)
-            if use_part_detection
-            else None
-        )
-
-        for row_divs in rows:
-            has_links = any(div.find("a") for div in row_divs)
-
-            if not has_links:
-                if part_regex:
-                    row_text = " ".join(
-                        div.get_text(strip=True) for div in row_divs
-                    )
-                    part_match = part_regex.match(row_text)
-                    if part_match:
-                        part = re.sub(r"\s+", " ", part_match.group(1).lower())
-                continue
-
-            # # Check for page numbers
-            # has_page_num = any(
-            #     div.get_text(strip=True).isdigit()
-            #     or self._contains_page_numbers(div.get_text(strip=True))
-            #     for div in row_divs
-            # )
-
-            # if not has_page_num:
-            #     continue
-
-            # Extract text and links
-            text_parts = []
-            row_links = []
-            page_texts = []
-
-            # Sort by left position
-            sorted_divs = []
-            for div in row_divs:
-                style = div.get("style", "")
-                left_match = re.search(r"left:(\d+(?:\.\d+)?)px", style)
-                if left_match:
-                    left_pos = float(left_match.group(1))
-                    sorted_divs.append((left_pos, div))
-
-            sorted_divs.sort(key=lambda x: x[0])
-
-            for left_pos, div in sorted_divs:
-                div_text = div.get_text(strip=True)
-
-                if div_text:
-                    if div_text.isdigit() or self._contains_page_numbers(
-                        div_text
-                    ):
-                        page_texts.append(div_text)
-                    elif not self._contains_page_numbers(div_text):
-                        text_parts.append(div_text)
-
-                # Extract links
-                for link in div.find_all("a"):
-                    href = link.get("href")
-                    if href and href.startswith("#"):
-                        row_links.append(href.split("#")[-1])
-
-            if row_links and text_parts:
-                # Filter links
-                if page_texts:
-                    page_text = page_texts[0]
-                    link_texts = [
-                        link.get_text(strip=True)
-                        for div in row_divs
-                        for link in div.find_all("a")
-                        if link.get_text(strip=True)
-                    ]
-                    row_links = self._filter_range_end_links(
-                        page_text, row_links, link_texts
-                    )
-
-                # Create entry based on format
-                if use_part_detection:  # 10-Q format
-                    first_link = row_links[0] if row_links else None
-                    if first_link:
-                        # 统一返回结构，增加多段标识与链接计数
-                        is_multi_section = self._is_multi_section_item(
-                            text_parts, row_links
-                        )
-                        entry = {
-                            "text": text_parts,
-                            "link": first_link,
-                            "is_multi_section": is_multi_section,
-                            "link_count": len(row_links),
-                        }
-                        if part:
-                            entry["part"] = part
-                        if "signature" in "".join(text_parts).lower():
-                            entry["part"] = "extracted"
-
-                        table_links.append(entry)
-
-                        if len(row_links) > 1:
-                            logging.info(
-                                f"Multi-section item detected in div (10Q): {text_parts[0] if text_parts else 'Unknown'} with {len(row_links)} links, using first link only"
-                            )
-                else:  # 10-K format
-                    is_multi_section = self._is_multi_section_item(
-                        text_parts, row_links
-                    )
-                    table_links.append(
-                        {
-                            "text": text_parts,
-                            "links": row_links,
-                            "is_multi_section": is_multi_section,
-                            "link_count": len(row_links),
-                        }
-                    )
-
-                    if is_multi_section and len(row_links) > 1:
-                        logging.info(
-                            f"Multi-section item detected in div: {text_parts[0] if text_parts else 'Unknown'} with {len(row_links)} links"
-                        )
-
+        # 使用通用分组与处理逻辑消除重复代码
+        rows = self._group_divs_by_position(positioned_divs)
+        table_links = self._process_div_rows(rows, use_part_detection)
         return [table_links] if table_links else []
 
     def _extract_div_links_base(
@@ -945,165 +944,28 @@ class BaseHtmlParser:
         if not toc_div:
             logging.warning("TABLE OF CONTENTS div not found")
             return self._extract_div_links2(soup, use_part_detection)
-        else:
-            # Get positioned divs and sort by top position
-            positioned_divs = []
-            for div in toc_div.find_all("div"):
-                style = div.get("style", "")
-                if "position:absolute" in style and "top:" in style:
-                    try:
-                        top_match = re.search(r"top:(\d+(?:\.\d+)?)px", style)
-                        if top_match:
-                            top_pos = float(top_match.group(1))
-                            positioned_divs.append((top_pos, div))
-                    except:
-                        continue
-            if not positioned_divs:
-                return []
+
+        # Get positioned divs and sort by top position
+        positioned_divs = []
+        for div in toc_div.find_all("div"):
+            style = div.get("style", "")
+            if "position:absolute" in style and "top:" in style:
+                try:
+                    top_match = re.search(r"top:(\d+(?:\.\d+)?)px", style)
+                    if top_match:
+                        top_pos = float(top_match.group(1))
+                        positioned_divs.append((top_pos, div))
+                except:
+                    continue
+
+        if not positioned_divs:
+            return []
 
         positioned_divs.sort(key=lambda x: x[0])
 
-        # Group by rows with tolerance
-        rows = []
-        current_row = []
-        current_top = None
-        tolerance = 5
-
-        for top_pos, div in positioned_divs:
-            if current_top is None or abs(top_pos - current_top) <= tolerance:
-                current_row.append(div)
-                current_top = top_pos
-            else:
-                if current_row:
-                    rows.append(current_row)
-                current_row = [div]
-                current_top = top_pos
-
-        if current_row:
-            rows.append(current_row)
-
-        # Parse rows
-        table_links = []
-        part = None
-        part_regex = (
-            re.compile(r"^\s*(Part\s+[IVXLC]+)\s*", re.IGNORECASE)
-            if use_part_detection
-            else None
-        )
-
-        for row_divs in rows:
-            has_links = any(div.find("a") for div in row_divs)
-
-            if not has_links:
-                if part_regex:
-                    row_text = " ".join(
-                        div.get_text(strip=True) for div in row_divs
-                    )
-                    part_match = part_regex.match(row_text)
-                    if part_match:
-                        part = re.sub(r"\s+", " ", part_match.group(1).lower())
-                continue
-
-            # Check for page numbers
-            # has_page_num = any(
-            #     div.get_text(strip=True).isdigit()
-            #     or self._contains_page_numbers(div.get_text(strip=True))
-            #     for div in row_divs
-            # )
-
-            # if not has_page_num:
-            #     continue
-
-            # Extract text and links
-            text_parts = []
-            row_links = []
-            page_texts = []
-
-            # Sort by left position
-            sorted_divs = []
-            for div in row_divs:
-                style = div.get("style", "")
-                left_match = re.search(r"left:(\d+(?:\.\d+)?)px", style)
-                if left_match:
-                    left_pos = float(left_match.group(1))
-                    sorted_divs.append((left_pos, div))
-
-            sorted_divs.sort(key=lambda x: x[0])
-
-            for left_pos, div in sorted_divs:
-                div_text = div.get_text(strip=True)
-
-                if div_text:
-                    if div_text.isdigit() or self._contains_page_numbers(
-                        div_text
-                    ):
-                        page_texts.append(div_text)
-                    elif not self._contains_page_numbers(div_text):
-                        text_parts.append(div_text)
-
-                # Extract links
-                for link in div.find_all("a"):
-                    href = link.get("href")
-                    if href and href.startswith("#"):
-                        row_links.append(href.split("#")[-1])
-
-            if row_links and text_parts:
-                # Filter links
-                if page_texts:
-                    page_text = page_texts[0]
-                    link_texts = [
-                        link.get_text(strip=True)
-                        for div in row_divs
-                        for link in div.find_all("a")
-                        if link.get_text(strip=True)
-                    ]
-                    row_links = self._filter_range_end_links(
-                        page_text, row_links, link_texts
-                    )
-
-                # Create entry based on format
-                if use_part_detection:  # 10-Q format
-                    first_link = row_links[0] if row_links else None
-                    if first_link:
-                        # 统一返回结构，增加多段标识与链接计数
-                        is_multi_section = self._is_multi_section_item(
-                            text_parts, row_links
-                        )
-                        entry = {
-                            "text": text_parts,
-                            "link": first_link,
-                            "is_multi_section": is_multi_section,
-                            "link_count": len(row_links),
-                        }
-                        if part:
-                            entry["part"] = part
-                        if "signature" in "".join(text_parts).lower():
-                            entry["part"] = "extracted"
-
-                        table_links.append(entry)
-
-                        if len(row_links) > 1:
-                            logging.info(
-                                f"Multi-section item detected in div (10Q): {text_parts[0] if text_parts else 'Unknown'} with {len(row_links)} links, using first link only"
-                            )
-                else:  # 10-K format
-                    is_multi_section = self._is_multi_section_item(
-                        text_parts, row_links
-                    )
-                    table_links.append(
-                        {
-                            "text": text_parts,
-                            "links": row_links,
-                            "is_multi_section": is_multi_section,
-                            "link_count": len(row_links),
-                        }
-                    )
-
-                    if is_multi_section and len(row_links) > 1:
-                        logging.info(
-                            f"Multi-section item detected in div: {text_parts[0] if text_parts else 'Unknown'} with {len(row_links)} links"
-                        )
-
+        # 使用通用分组与处理逻辑消除重复代码
+        rows = self._group_divs_by_position(positioned_divs)
+        table_links = self._process_div_rows(rows, use_part_detection)
         return [table_links] if table_links else []
 
     def _priority_index_table(self, tables: List[Any]) -> List[Any]:
@@ -1134,3 +996,9 @@ class BaseHtmlParser:
         return tables
 
 
+
+if __name__ == "__main__":
+    html_content_path = "/Users/chenghao.zhang/Documents/secfile/edgar/000164117225023248.html"
+    with open(html_content_path, "r") as f:
+        html_content = f.read()
+    print(BaseHtmlParser()._extract_div_links_base(html_content, use_part_detection=True))

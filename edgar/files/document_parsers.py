@@ -391,6 +391,11 @@ class ParsedHtml10K(BaseHtmlParser):
             "Item 2": "1 and 2. Business and Properties",
         }
 
+        items_match_7 = {
+            "Item 5": "5. Market for Registrant’s Common Equity, Related Stockholder Matters and Issuer Purchases of Equity Securities",
+            "Item 7": "7. Management’s Discussion and Analysis of Financial Condition and Results of Operations",
+        }
+
         # Matching function types:
         # 1. equal
         # 2. startswith
@@ -416,6 +421,7 @@ class ParsedHtml10K(BaseHtmlParser):
             (items_match_2_3, lambda x, y: x.strip().lower() == y.lower()),
             (items_match_3, lambda x, y: y.lower() in x.lower()),
             (items_match_5, lambda x, y: y.lower() in x.lower()),
+            (items_match_7, lambda x, y: y.lower() in x.lower()),
         ]
 
         # Process matches and collect ALL links for each item (support multiple sections)
@@ -775,6 +781,15 @@ class ParsedHtml10Q(BaseHtmlParser):
             },
         }
 
+        items_match_4 = {  # Item descriptions
+            "part i": {
+                "Item 2": "Management’s Discussion and Analysis of Financial Condition and Results of Operations",
+            },
+            "part ii": {
+            },
+        }
+
+
         match_function_map = [
             (
                 items_match_1,
@@ -787,7 +802,7 @@ class ParsedHtml10Q(BaseHtmlParser):
                 lambda x, y: x.strip().lower().startswith(y.lower()),
             ),
             (items_match_3, lambda x, y: y.lower() in x.lower()),
-            # (items_match_4, lambda x, y: x.strip().lower().startswith(y.lower())),
+            (items_match_4, lambda x, y: y.lower() in x.lower()),
         ]
 
         # Process matches and ensure unique items
@@ -880,7 +895,6 @@ class ParsedHtml10Q(BaseHtmlParser):
     ) -> Dict[str, Any]:
         """Extract 10-Q items from HTML content, handling same item numbers in different parts."""
         index_table = self.extract_html_link_info(html_content)
-        
         if self.check_10q_index_table(index_table):
             index_table = self._priority_index_table(index_table)
             item_links = self.extract_item_and_split(index_table)
@@ -1259,6 +1273,10 @@ class ParsedHtml20F(ParsedHtml10K):
             "Item 1": "1 and 2. Business and Properties",
             "Item 2": "1 and 2. Business and Properties",
         }
+        
+        items_match_7 = {
+            "Item 16F": "16F. Change in Registrant’s Certifying Accountant",
+        }
 
         # Matching function types:
         # 1. equal
@@ -1289,6 +1307,7 @@ class ParsedHtml20F(ParsedHtml10K):
             (items_match_2_3, lambda x, y: x.strip().lower() == y.lower()),
             (items_match_3, lambda x, y: y.lower() in x.lower()),
             (items_match_5, lambda x, y: y.lower() in x.lower()),
+            (items_match_7, lambda x, y: y.lower() in x.lower()),
         ]
 
         # Process matches and collect ALL links for each item (support multiple sections)
