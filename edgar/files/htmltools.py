@@ -402,7 +402,7 @@ class ChunkedDocument:
         
         # Add extracted section containing introduction and signature
         result["extracted"] = {}
-        
+                
         # Get signature content
         try:
             signature_content = self.get_signature(markdown=markdown)
@@ -410,11 +410,16 @@ class ChunkedDocument:
         except:
             result["extracted"]["signature"] = ""
         
+        _introduction_content = ""
+        if result.get(""):
+            if result[""].get(""):
+                _introduction_content = result[""].get("")
+
         try:
             introduction_content = self.get_introduction(markdown=markdown)
-            result["extracted"]["item 0"] = introduction_content if introduction_content else ""
+            result["extracted"]["item 0"] = introduction_content or _introduction_content
         except:
-            result["extracted"]["item 0"] = ""
+            result["extracted"]["item 0"] = _introduction_content
         return result
 
     def _chunks_for(self, item_or_part: str, col: str = 'Item'):

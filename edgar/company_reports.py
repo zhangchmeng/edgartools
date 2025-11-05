@@ -379,18 +379,21 @@ class TenK(CompanyReport):
     
         if candidate_text:
             financial_statement_patterns = [
-                r"CONSOLIDATED\s+FINANCIAL\s+STATEMENTS",
-                r"COMBINED\s+FINANCIAL\s+STATEMENTS", 
-                r"CONDENSED\s+CONSOLIDATED\s+FINANCIAL\s+STATEMENTS",
-                r"CONDENSED\s+COMBINED\s+FINANCIAL\s+STATEMENTS",
+                # r"CONSOLIDATED\s+FINANCIAL\s+STATEMENTS",
+                # r"COMBINED\s+FINANCIAL\s+STATEMENTS", 
+                # r"CONDENSED\s+CONSOLIDATED\s+FINANCIAL\s+STATEMENTS",
+                # r"CONDENSED\s+COMBINED\s+FINANCIAL\s+STATEMENTS",
                 r"FINANCIAL\s+STATEMENTS",
+                r"F-1"
             ]
             
             match = None
+            # 使用多个正则，取最早出现（最靠前）的匹配
+            match = None
             for pattern in financial_statement_patterns:
-                match = re.search(pattern, candidate_text, re.IGNORECASE)
-                if match:
-                    break
+                m = re.search(pattern, candidate_text, re.IGNORECASE)
+                if m and (match is None or m.start() < match.start()):
+                    match = m
             if match:
                 # 被拆分的数据：上半部分（匹配之前）填充回原本的模块，下半部分（从匹配开始）附加到 item 8
                 before = candidate_text[:match.start()]
@@ -852,19 +855,21 @@ class TwentyF(CompanyReport):
     
         if candidate_text:
             financial_statement_patterns = [
-                r"CONSOLIDATED\s+FINANCIAL\s+STATEMENTS",
-                r"COMBINED\s+FINANCIAL\s+STATEMENTS", 
-                r"CONDENSED\s+CONSOLIDATED\s+FINANCIAL\s+STATEMENTS",
-                r"CONDENSED\s+COMBINED\s+FINANCIAL\s+STATEMENTS",
+                # r"CONSOLIDATED\s+FINANCIAL\s+STATEMENTS",
+                # r"COMBINED\s+FINANCIAL\s+STATEMENTS", 
+                # r"CONDENSED\s+CONSOLIDATED\s+FINANCIAL\s+STATEMENTS",
+                # r"CONDENSED\s+COMBINED\s+FINANCIAL\s+STATEMENTS",
                 r"FINANCIAL\s+STATEMENTS",
+                r"F-1"
             ]
             
             match = None
+            # 使用多个正则，取最早出现（最靠前）的匹配
+            match = None
             for pattern in financial_statement_patterns:
-                match = re.search(pattern, candidate_text, re.IGNORECASE)
-                if match:
-                    break
-                
+                m = re.search(pattern, candidate_text, re.IGNORECASE)
+                if m and (match is None or m.start() < match.start()):
+                    match = m
             if match:
                 # 被拆分的数据：上半部分（匹配之前）填充回原本的模块，下半部分（从匹配开始）附加到 item 8
                 before = candidate_text[:match.start()]

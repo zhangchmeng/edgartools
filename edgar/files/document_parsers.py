@@ -607,13 +607,16 @@ class ParsedHtml10K(BaseHtmlParser):
                     # r"CONDENSED\s+CONSOLIDATED\s+FINANCIAL\s+STATEMENTS",
                     # r"CONDENSED\s+COMBINED\s+FINANCIAL\s+STATEMENTS",
                     r"FINANCIAL\s+STATEMENTS",
+                    r"F-1"
                 ]
                 
                 match = None
+                # 使用多个正则，取最早出现（最靠前）的匹配
+                match = None
                 for pattern in financial_statement_patterns:
-                    match = re.search(pattern, candidate_text, re.IGNORECASE)
-                    if match:
-                        break
+                    m = re.search(pattern, candidate_text, re.IGNORECASE)
+                    if m and (match is None or m.start() < match.start()):
+                        match = m
                 
                 if match:
                     # 被拆分的数据：上半部分（匹配之前）填充回原本的模块，下半部分（从匹配开始）附加到 item 8
@@ -1014,6 +1017,7 @@ class ParsedHtml20F(ParsedHtml10K):
             "Item 13": "Item 13.",
             "Item 14": "Item 14.",
             "Item 15": "Item 15.",
+            "Item 16": "Item 16.",
             "Item 16A": "Item 16A.",
             "Item 16B": "Item 16B.",
             "Item 16C": "Item 16C.",
@@ -1048,6 +1052,7 @@ class ParsedHtml20F(ParsedHtml10K):
             "Item 13": "Item 13:",
             "Item 14": "Item 14:",
             "Item 15": "Item 15:",
+            "Item 16": "Item 16:",
             "Item 16A": "Item 16A:",
             "Item 16B": "Item 16B:",
             "Item 16C": "Item 16C:",
@@ -1214,6 +1219,7 @@ class ParsedHtml20F(ParsedHtml10K):
             "Item 13": "Defaults, Dividend Arrearages and Delinquencies",
             "Item 14": "Material Modifications to the Rights of Security Holders and Use of Proceeds",
             "Item 15": "Controls and Procedures",
+            "Item 16": "Item 16 [Reserved]",
             "Item 16A": "Audit Committee Financial Expert",
             "Item 16B": "Code of Ethics",
             "Item 16C": "Principal Accountant Fees and Services",
@@ -1253,6 +1259,7 @@ class ParsedHtml20F(ParsedHtml10K):
             "Item 13": "13. Defaults, Dividend Arrearages and Delinquencies",
             "Item 14": "14. Material Modifications to the Rights of Security Holders and Use of Proceeds",
             "Item 15": "15. Controls and Procedures",
+            "Item 16": "16. [Reserved]",
             "Item 16A": "16A. Audit Committee Financial Expert",
             "Item 16B": "16B. Code of Ethics",
             "Item 16C": "16C. Principal Accountant Fees and Services",
@@ -1467,14 +1474,16 @@ class ParsedHtml20F(ParsedHtml10K):
                     # r"CONDENSED\s+CONSOLIDATED\s+FINANCIAL\s+STATEMENTS",
                     # r"CONDENSED\s+COMBINED\s+FINANCIAL\s+STATEMENTS",
                     r"FINANCIAL\s+STATEMENTS",
+                    r"F-1"
                 ]
-
+                
+                match = None
+                # 使用多个正则，取最早出现（最靠前）的匹配
                 match = None
                 for pattern in financial_statement_patterns:
-                    match = re.search(pattern, candidate_text, re.IGNORECASE)
-                    if match:
-                        break
-                
+                    m = re.search(pattern, candidate_text, re.IGNORECASE)
+                    if m and (match is None or m.start() < match.start()):
+                        match = m
                 if match:
                     # 被拆分的数据：上半部分（匹配之前）填充回原本的模块，下半部分（从匹配开始）附加到 item 8
                     before = candidate_text[:match.start()]

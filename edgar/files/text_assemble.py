@@ -5,6 +5,7 @@ from typing import List, Dict, Tuple, Any, Optional, Set
 
 try:
     from bs4 import BeautifulSoup, Tag  # type: ignore
+    from bs4.element import NavigableString
 
     BS4_AVAILABLE = True
 except ImportError:
@@ -91,7 +92,12 @@ class AssembleText:
     def clean_and_assemble_text(
         start_element: Tag, markdown: bool = False
     ) -> str:
-        start_element = clean_html_root(start_element)
+
+        if isinstance(start_element, NavigableString):
+            pass
+        else:
+            start_element = clean_html_root(start_element)
+   
         # Now find the full text
         blocks: List[Block] = extract_and_format_content(start_element)
         # Compress the blocks
@@ -113,17 +119,15 @@ class AssembleText:
 
     @staticmethod
     def assemble_html_document(tags: List[Tag], markdown: bool = False) -> str:
-        return ChunkedDocument.clean_part_line(
-            "".join(
-                [
-                    AssembleText.clean_and_assemble_text(
-                        tag, markdown=markdown
-                    )
-                    for tag in tags
-                ]
-            )
+        """Simplified text assembly utilities for HTML document processing"""
+        if not tags:
+            return ""
+        combined_html = "".join(str(tag) for tag in tags if tag is not None)
+        combined_soup = BeautifulSoup(combined_html, "html.parser")
+        merged_text = AssembleText.clean_and_assemble_text(
+            combined_soup, markdown=markdown
         )
-    """Simplified text assembly utilities for HTML document processing"""
+        return ChunkedDocument.clean_part_line(merged_text)
 
     # 定义一次性的忽略标签集合
     IGNORE_TAGS: Set[str] = {
@@ -140,10 +144,10 @@ class AssembleText:
     @staticmethod
     def is_content_element(element: Tag) -> bool:
         """检查元素是否为有效内容元素"""
-        return (
+        return not (
             hasattr(element, "name")
             and element.name
-            and element.name not in AssembleText.IGNORE_TAGS
+            and element.name in AssembleText.IGNORE_TAGS
         )
 
     @staticmethod
@@ -240,10 +244,10 @@ class AssembleText:
                     ordered_links.append((name, link_id, element))
 
             # 优化：使用更高效的位置估算方法
+            html_str = str(soup)
             if ordered_links:
                 # 创建一个元素到位置的映射，避免重复计算
                 element_positions = {}
-                html_str = str(soup)
 
                 for name, link_id, element in ordered_links:
                     # 使用元素的字符串表示在HTML中的位置作为排序依据
@@ -257,9 +261,21 @@ class AssembleText:
                         )
 
                 # 根据位置排序
+                # 先按在文档中的位置排序，其次按名称排序，确保稳定且可预期
                 ordered_links.sort(
-                    key=lambda x: element_positions.get(x, float("inf"))
+                    key=lambda x: (
+                        element_positions.get(x, float("inf")),
+                        (str(x[0][1]).lower() if isinstance(x[0], (list, tuple)) and len(x[0]) > 1 else str(x[0]).lower())
+                    )
                 )
+
+            # 记录匹配到的链接点数量，便于调试空列表问题
+            try:
+                logging.debug(
+                    f"assemble_items: matched link count={len(ordered_links)}"
+                )
+            except Exception:
+                pass
 
         with time_section("extract_content_by_links"):
             # 提取链接点之间的内容
@@ -303,11 +319,10 @@ class AssembleText:
                     elif AssembleText.is_content_element(current):
                         # 获取元素的文本内容
                         elem_content = (
-                            current.get_text().strip()
+                            current.get_text()
                             if hasattr(current, "get_text")
-                            else str(current).strip()
+                            else str(current)
                         )
-
                         # 只有当内容不为空时才考虑添加
                         if (
                             elem_content
@@ -332,9 +347,12 @@ class AssembleText:
                         continue
 
                     # 检查当前元素的子元素，将它们标记为已处理
-                    for child in element.descendants:
-                        processed_elements.add(id(child))
-
+                    # 仅当 element 是 Tag 才遍历 descendants
+                    if hasattr(element, "descendants"):
+                        for child in element.descendants:
+                            processed_elements.add(id(child))
+                    else:
+                        processed_elements.add(id(element))
                     # 将当前元素添加到结果中
                     section_elements.append(element)
                     processed_elements.add(id(element))
@@ -370,9 +388,9 @@ class AssembleText:
                         if AssembleText.is_content_element(element):
                             # 获取元素的文本内容
                             elem_content = (
-                                element.get_text().strip()
+                                element.get_text()
                                 if hasattr(element, "get_text")
-                                else str(element).strip()
+                                else str(element)
                             )
 
                             # 只有当内容不为空时才考虑添加
@@ -392,8 +410,11 @@ class AssembleText:
                             continue
 
                         # 检查当前元素的子元素，将它们标记为已处理
-                        for child in element.descendants:
-                            processed_intro_elements.add(id(child))
+                        if hasattr(element, "descendants"):
+                            for child in element.descendants:
+                                processed_intro_elements.add(id(child))
+                        else:
+                            processed_intro_elements.add(id(element))
 
                         # 将当前元素添加到结果中
                         intro_elements.append(element)
@@ -406,7 +427,21 @@ class AssembleText:
         for key, value in content_by_link.items():
             results[key] = AssembleText.assemble_html_document(value)
 
-        if not any("signature" in str(key).lower() for key in content_by_link.keys()):
+        # 当未找到任何链接点时，进行兜底：将全文作为 Item 0 返回并提前结束
+        if not ordered_links:
+            try:
+                body = soup.find("body") or soup
+                results[("extracted", "Item 0")] = AssembleText.clean_and_assemble_text(
+                    body, markdown=True
+                )
+                logging.debug(
+                    "assemble_items: no ordered_links; returned whole document as Item 0"
+                )
+            except Exception as e:
+                logging.error(f"Fallback assemble Item 0 failed: {e}")
+            return results
+
+        if ordered_links and not any("signature" in str(key).lower() for key in content_by_link.keys()):
             last_item = ordered_links[-1]
             last_item_name = last_item[0] if isinstance(last_item, tuple) else last_item[0]
             last_content = results.get(last_item_name, "")
@@ -416,7 +451,7 @@ class AssembleText:
                 signature_line_index = None
                 
                 # Optimization: limit search scope
-                search_lines = content_lines[-100:] if len(content_lines) > 100 else content_lines
+                search_lines = content_lines
                 for i, line in enumerate(search_lines):
                     if line.strip().upper() in sig_key:
                         signature_line_index = len(content_lines) - len(search_lines) + i
@@ -447,10 +482,15 @@ class AssembleText:
         # 3. 对于每个其他item的最后20个非空行检查，行开头是否为item，是否应该切分到标准item中
             # 顺序按照标准 item顺序/link传入顺序 划分
 
+        # 无链接点时，直接返回，不进行规范化处理
+        if not ordered_links:
+            logging.debug("re_regular_content: no ordered_links, skip normalization")
+            return results
+
         first_item = ordered_links[0][0]
         item0_keys = ("extracted", "Item 0")
 
-        item0_content = results[item0_keys]
+        item0_content = results.get(item0_keys, "")
         # 找到 开头为Signature的行，并将文本切分为包含Signature的文本和剩余文本两部分
         # 上半部分填入results[item0_keys]， 剩余文本附加到 results[first_item]
     

@@ -218,8 +218,6 @@ if __name__ == "__main__":
         print(f"   找到页码: {hr_results.page_numbers}")
         print(f"   总页码数: {len(hr_results.page_numbers)}")
         print(f"   页面内容数: {len(hr_results.page_contents)}")
-        import pdb;pdb.set_trace()
-
     except FileNotFoundError:
         print(f"错误: 找不到文件 {html_file_path}")
         print("请确保HTML文件存在")
