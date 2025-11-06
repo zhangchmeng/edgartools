@@ -314,7 +314,8 @@ def chunks2df(chunks: List[List[Block]],
         else:
             mask = (chunk_df.index >= signature_loc)
         chunk_df.loc[mask, 'Item'] = np.nan
-        chunk_df.Signature = chunk_df.Signature.fillna("")
+        chunk_df.loc[mask, "Signature"] = True
+        # chunk_df.Signature = chunk_df.Signature.fillna("")
 
     # Fill the Item column with "" then set to title case
     chunk_df.Item = chunk_df.Item.fillna("").str.title()
@@ -377,8 +378,9 @@ class ChunkedDocument:
         df = self._chunked_data
         
         # Filter rows with both Part and Item
-        filtered_df = df[(df['Part'].notna()) & (df['Item'].notna())].copy()
-        
+        filtered_df = df[(df['Part'].notna()) & (df['Item'].notna()) & (df['Part'] != "") & (df['Item']!="")].copy()
+       
+
         # Create result dictionary
         result = {}
         # Group by Part and collect Items and content under each Part
@@ -399,10 +401,8 @@ class ChunkedDocument:
                         result[part_key][item_key] = content
                     else:
                         result[part_key][item_key] = ""
-        
         # Add extracted section containing introduction and signature
         result["extracted"] = {}
-                
         # Get signature content
         try:
             signature_content = self.get_signature(markdown=markdown)

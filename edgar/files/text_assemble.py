@@ -559,11 +559,29 @@ class AssembleText:
             # 构造以 next_label 开头的匹配，忽略大小写，允许后续标点或空白
             match_idx = None
             pattern = rf"^{re.escape(next_label)}(?:\b|\s|[\.|:;\-–—])"
-            for i, ln in enumerate(tail):
-                if re is not None and re.match(pattern, ln.strip(), flags=re.IGNORECASE):
-                    # curr_key, next_key, ln, pattern
-                    match_idx = len(lines) - len(tail) + i
-                    break
+            # for i, ln in enumerate(tail):
+            #     if re is not None and re.match(pattern, ln.strip(), flags=re.IGNORECASE):
+            #         # curr_key, next_key, ln, pattern
+            #         match_idx = len(lines) - len(tail) + i
+            #         break
+            if "SIGNATURE" in next_label.upper():
+                for i, ln in enumerate(tail):
+                    if match_idx is not None:
+                        break
+                    for _label in ("SIGNATURE", "SIGNATURES"):
+                        # pattern_curr = rf"^{re.escape(_label)}(?:\b|\s|[\.|:;\-–—])"
+                        pattern = rf"^{re.escape(_label)}(?:\b|\s|[\.|:;\-–—])"
+                        if re is not None and re.match(pattern, ln.strip(), flags=re.IGNORECASE):
+                            # curr_key, next_key, ln, pattern
+                            match_idx = len(lines) - len(tail) + i
+                            break
+            else:
+                pattern = rf"^{re.escape(next_label)}(?:\b|\s|[\.|:;\-–—])"
+                for i, ln in enumerate(tail):
+                    if re is not None and re.match(pattern, ln.strip(), flags=re.IGNORECASE):
+                        # curr_key, next_key, ln, pattern
+                        match_idx = len(lines) - len(tail) + i
+                        break
 
             # 未匹配则跳过当前条目
             if match_idx is None:
@@ -605,12 +623,22 @@ class AssembleText:
             head = lines[:50] if len(lines) > 50 else lines
 
             match_idx = None
-            pattern_curr = rf"^{re.escape(curr_label)}(?:\b|\s|[\.|:;\-–—])"
-            for i, ln in enumerate(head):
-                if re is not None and re.match(pattern_curr, ln.strip(), flags=re.IGNORECASE):
-                    match_idx = i
-                    break
-
+            if "SIGNATURE" in curr_label.upper():
+                for i, ln in enumerate(head):
+                    if match_idx is not None:
+                        break
+                    for _label in ("SIGNATURE", "SIGNATURES"):
+                        pattern_curr = rf"^{re.escape(_label)}(?:\b|\s|[\.|:;\-–—])"
+                        if re is not None and re.match(pattern_curr, ln.strip(), flags=re.IGNORECASE):
+                            match_idx = i
+                            break
+            else:
+                pattern_curr = rf"^{re.escape(curr_label)}(?:\b|\s|[\.|:;\-–—])"
+                for i, ln in enumerate(head):
+                    if re is not None and re.match(pattern_curr, ln.strip(), flags=re.IGNORECASE):
+                        match_idx = i
+                        break
+            
             # 若在头部找到当前标题且其前面存在内容，则将其前内容归还给上一个条目
             if match_idx is None or match_idx <= 0:
                 continue

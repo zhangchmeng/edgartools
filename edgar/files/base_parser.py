@@ -524,7 +524,6 @@ class BaseHtmlParser:
 
             if table_links:
                 link_info.append(table_links)
-
         return link_info
 
     def _is_item_header_row(self, text: List[str]) -> bool:
@@ -636,7 +635,7 @@ class BaseHtmlParser:
                     and link_elem.attrs.get("href").startswith("#")
                 ):
                     link = link_elem.attrs.get("href").split("#")[-1]
-                    if part:
+                    if part and link:
                         return [{"part": part, "text": text, "link": link}]
                     else:
                         return [{"text": text, "link": link}]
@@ -662,9 +661,12 @@ class BaseHtmlParser:
                 filtered_links = self._filter_range_end_links(
                     cell_text, cell_links, link_texts
                 )
-                row_links.extend(filtered_links)
+                # 仅当 filtered_links 非空时才扩展
+                if filtered_links:
+                    row_links.extend(filtered_links)
 
-            if row_links:
+            # 确保 row_links 中至少有一个有效链接
+            if row_links and any(link for link in row_links):
                 is_multi_section = self._is_multi_section_item(text, row_links)
                 result = [
                     {
