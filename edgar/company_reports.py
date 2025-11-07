@@ -296,6 +296,7 @@ class TenK(CompanyReport):
         # part_item_res = self.chunked_document_split_financial.part_item_res(markdown=markdown)
         financial_content = ""
         part_item_res = self.chunked_document.part_item_res(markdown=markdown)
+  
         # 合并被错误拆分到不同 Part 的相同 Item，统一归并到其规范 Part，并移除其它 Part 的重复项
         def _canonical_part_for_item(item_key: str):
             m = re.match(r'^\s*item\s+(\d+)', item_key, re.IGNORECASE)
@@ -352,12 +353,26 @@ class TenK(CompanyReport):
                     except Exception:
                         part_item_res[p][item_key] = ''
         
-        if financial_content:
-            if part_item_res.get("part ii") and part_item_res['part ii'].get("item 8"):
-                part_item_res['part ii']['item 8'] += financial_content
+        # if financial_content:
+        #     if part_item_res.get("part ii") and part_item_res['part ii'].get("item 8"):
+        #         part_item_res['part ii']['item 8'] += financial_content
+        
         # 从以下两个模块中找出字符长度最长的模块，然后找出第一个能匹配到的字符
         # "CONSOLIDATED FINANCIAL STATEMENTS"（不区分大小写），将从该匹配处开始的内容附加到 item 8 中
         # 候选模块：result["extracted"]["signature"], result["part iv"]["item 16"]
+        if part_item_res.get("part ii", {}).get("item 8", ""):
+            target_part = "part ii"
+            target_item = "item 8"
+            current_financial_length = len(part_item_res.get("part ii", {}).get("item 8", ""))
+        elif part_item_res.get("part iv", {}).get("item 15", ""):
+            target_part = "part iv"
+            target_item = "item 15"
+            current_financial_length = len(part_item_res.get("part iv", {}).get("item 15", ""))
+        else:
+            target_part = "part ii"
+            target_item = "item 8"
+            current_financial_length = len(part_item_res.get("part ii", {}).get("item 8", ""))
+
         signature_text = ""
         item16_text = ""
         try:
@@ -377,7 +392,7 @@ class TenK(CompanyReport):
             candidate_text = signature_text
             candidate_key = ("extracted", "signature")
     
-        if candidate_text:
+        if candidate_text and len(candidate_text) > current_financial_length:
             financial_statement_patterns = [
                 # r"CONSOLIDATED\s+FINANCIAL\s+STATEMENTS",
                 # r"COMBINED\s+FINANCIAL\s+STATEMENTS", 
@@ -403,8 +418,8 @@ class TenK(CompanyReport):
                 part_item_res.setdefault(candidate_key[0], {})[candidate_key[1]] = (before or "").strip()
     
                 # 下半部分附加到 item 8
-                part_item_res.setdefault("part ii", {}).setdefault("item 8", "")
-                part_item_res["part ii"]["item 8"] += "\n" + tail.strip()
+                part_item_res.setdefault(target_part, {}).setdefault(target_item, "")
+                part_item_res[target_part][target_item] += "\n" + tail.strip()
         return part_item_res
 
     def get_id_parse_res(self, markdown:bool=True):
@@ -834,6 +849,22 @@ class TwentyF(CompanyReport):
         # 从以下两个模块中找出字符长度最长的模块，然后找出第一个能匹配到的字符
         # "CONSOLIDATED FINANCIAL STATEMENTS"（不区分大小写），将从该匹配处开始的内容附加到 item 8 中
         # 候选模块：result["extracted"]["signature"], result["part iv"]["item 16"]
+        try:
+            item17_text = part_item_res.get("part iii", {}).get("item 17", "") or ""
+        except Exception:
+            item17_text = ""
+        try:
+            item18_text = part_item_res.get("part iii", {}).get("item 18", "") or ""
+        except Exception:
+            item18_text = ""
+    
+        if len(item18_text) > len(item17_text):
+            target_key = "item 18"
+            current_financial_length = len(item18_text)
+        else:
+            target_key = "item 17"
+            current_financial_length = len(item17_text)
+        
         signature_text = ""
         item19_text = ""
         try:
@@ -853,12 +884,8 @@ class TwentyF(CompanyReport):
             candidate_text = signature_text
             candidate_key = ("extracted", "signature")
     
-        if candidate_text:
+        if candidate_text and len(candidate_text) > current_financial_length:
             financial_statement_patterns = [
-                # r"CONSOLIDATED\s+FINANCIAL\s+STATEMENTS",
-                # r"COMBINED\s+FINANCIAL\s+STATEMENTS", 
-                # r"CONDENSED\s+CONSOLIDATED\s+FINANCIAL\s+STATEMENTS",
-                # r"CONDENSED\s+COMBINED\s+FINANCIAL\s+STATEMENTS",
                 r"FINANCIAL\s+STATEMENTS",
                 r"F-1"
             ]
@@ -879,8 +906,8 @@ class TwentyF(CompanyReport):
                 part_item_res.setdefault(candidate_key[0], {})[candidate_key[1]] = (before or "").strip()
     
                 # 下半部分附加到 item 8
-                part_item_res.setdefault("part iii", {}).setdefault("item 18", "")
-                part_item_res["part iii"]["item 18"] += "\n" + tail.strip()
+                part_item_res.setdefault("part iii", {}).setdefault(target_key, "")
+                part_item_res["part iii"][target_key] += "\n" + tail.strip()
         return part_item_res
 
     @lru_cache(maxsize=1)
