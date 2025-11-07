@@ -5,23 +5,23 @@ from typing import List, Dict, Optional, Any, Tuple
 try:
     from bs4 import BeautifulSoup, Tag
 except ImportError:
-    # 在运行环境缺少 bs4 时，避免类型或运行时错误
+    # Avoid type/runtime errors when bs4 is missing in the runtime environment
     BeautifulSoup = None
     Tag = None
 
 def replace_space(text: str):
     html_space_entities = {
-        '&nbsp;': ' ',      # 不间断空格
-        '&ensp;': ' ',      # 半角空格
-        '&emsp;': ' ',      # 全角空格
-        '&thinsp;': ' ',    # 窄空格
-        '&#160;': ' ',      # 不间断空格的数字实体
-        '&#8194;': ' ',     # 半角空格的数字实体
-        '&#8195;': ' ',     # 全角空格的数字实体
-        '&#8201;': ' ',     # 窄空格的数字实体
-        '&#32;': ' ',       # 普通空格的数字实体
-        '\xa0': ' ',       # 非断行空格字符
-        '\u00A0': ' ',     # 非断行空格的Unicode表示
+        '&nbsp;': ' ',      # Non-breaking space
+        '&ensp;': ' ',      # En space
+        '&emsp;': ' ',      # Em space
+        '&thinsp;': ' ',    # Thin space
+        '&#160;': ' ',      # Numeric entity for non-breaking space
+        '&#8194;': ' ',     # Numeric entity for en space
+        '&#8195;': ' ',     # Numeric entity for em space
+        '&#8201;': ' ',     # Numeric entity for thin space
+        '&#32;': ' ',       # Numeric entity for regular space
+        '\xa0': ' ',       # Non-breaking space character
+        '\u00A0': ' ',     # Unicode representation of non-breaking space
     }
     
     for entity, space in html_space_entities.items():
@@ -273,7 +273,7 @@ class BaseHtmlParser:
         if soup is None:
             return None
 
-        # Remove script and style tags（避免调用 soup([...]) 导致 None 被调用的问题）
+        # Remove script and style tags (avoid using soup([...]) which may return None)
         for tag in soup.find_all(["script", "style", "noscript"]):
             tag.decompose()
 
@@ -313,7 +313,7 @@ class BaseHtmlParser:
             for row_idx, row in enumerate(rows):
                 if use_part_detection and part_regex:
                     row_text = row.get_text().strip()
-                    # 处理字符拼接导致的 "PARTI." -> "Part I."（自动插入空格）
+                    # Handle concatenation: "PARTI." -> "Part I." (auto insert space)
                     row_text = re.sub(r"(?i)\bpart([ivxlc]+)\b", r"Part \1", row_text)
                     part_match = part_regex.match(row_text)
                     if part_match:
@@ -432,7 +432,7 @@ class BaseHtmlParser:
                 #     import pdb;pdb.set_trace()
                 if use_part_detection and part_regex:
                     row_text = row.get_text().strip()
-                    # 处理字符拼接导致的 "PARTI." -> "Part I."（自动插入空格）
+                    # Handle concatenation: "PARTI." -> "Part I." (auto insert space)
                     row_text = re.sub(r"(?i)\bpart([ivxlc]+)\b", r"Part \1", row_text)
                     part_match = part_regex.match(row_text)
                     if part_match:
@@ -545,7 +545,7 @@ class BaseHtmlParser:
         
         first_cell = replace_space(first_cell)
         
-        # 将所有连续的空白字符（换行、制表符、多个空格等）替换为单个空格
+        # Replace any consecutive whitespace (newline, tab, multiple spaces) with a single space
         first_cell = re.sub(r'\s+', ' ', first_cell).strip()
 
         # Match patterns like "Item 1.", "Item 1A.", "Item 1B.", etc.
@@ -661,11 +661,11 @@ class BaseHtmlParser:
                 filtered_links = self._filter_range_end_links(
                     cell_text, cell_links, link_texts
                 )
-                # 仅当 filtered_links 非空时才扩展
+                # Only extend when filtered_links is non-empty
                 if filtered_links:
                     row_links.extend(filtered_links)
 
-            # 确保 row_links 中至少有一个有效链接
+            # Ensure row_links contains at least one valid link
             if row_links and any(link for link in row_links):
                 is_multi_section = self._is_multi_section_item(text, row_links)
                 result = [
@@ -687,7 +687,7 @@ class BaseHtmlParser:
             return []
 
     def _group_divs_by_position(self, positioned_divs: List[Any]) -> List[List[Any]]:
-        """将按 top 排序的 div 列表按行分组（容差 5px）。"""
+        """Group a list of divs (sorted by top) into rows (5px tolerance)."""
         rows: List[List[Any]] = []
         current_row: List[Any] = []
         current_top: Optional[float] = None
@@ -709,7 +709,7 @@ class BaseHtmlParser:
         return rows
 
     def _process_div_rows(self, rows: List[List[Any]], use_part_detection: bool) -> List[Dict[str, Any]]:
-        """统一处理按行分组后的 div，提取文本与链接并生成结构化结果。"""
+        """Process grouped div rows: extract text and links and build structured results."""
         table_links: List[Dict[str, Any]] = []
         part: Optional[str] = None
         part_regex = (
@@ -721,13 +721,13 @@ class BaseHtmlParser:
         for row_divs in rows:
             has_links = any(getattr(div, "find", lambda *_: None)("a") for div in row_divs)
 
-            # 当该行没有链接时尝试解析 Part（仅在启用 part 检测时）
+            # When the row has no links, try parsing Part (only when enabled)
             if not has_links:
                 if part_regex:
                     row_text = " ".join(
                         getattr(div, "get_text", lambda **_: "")(strip=True) for div in row_divs
                     )
-                    # 处理字符拼接导致的 "PARTI." -> "Part I."（自动插入空格）
+                    # Handle concatenation: "PARTI." -> "Part I." (auto insert space)
                     row_text = re.sub(r"(?i)\bpart([ivxlc]+)\b", r"Part \1", row_text)
                     part_match = part_regex.match(row_text)
                     if part_match:
@@ -736,7 +736,7 @@ class BaseHtmlParser:
                         part = re.sub(r"\s+", " ", raw_part)
                 continue
 
-            # 按 left 位置排序，再提取文本与链接
+            # Sort by left position, then extract text and links
             sorted_divs: List[Tuple[float, Any]] = []
             for div in row_divs:
                 style = getattr(div, "get", lambda *_: "")("style", "")
@@ -760,14 +760,14 @@ class BaseHtmlParser:
                     elif not self._contains_page_numbers(div_text):
                         text_parts.append(div_text)
 
-                # 提取链接
+                # Extract links
                 for link in getattr(div, "find_all", lambda *_: [])("a"):
                     href = getattr(link, "get", lambda *_: None)("href")
                     if href and href.startswith("#"):
                         row_links.append(href.split("#")[-1])
 
             if row_links and text_parts:
-                # 过滤区间尾部链接
+                # Filter links at the end of the range
                 if page_texts:
                     page_text = page_texts[0]
                     link_texts = [
@@ -778,7 +778,7 @@ class BaseHtmlParser:
                     ]
                     row_links = self._filter_range_end_links(page_text, row_links, link_texts)
 
-                # 10-Q：仅取首个链接；10-K：保留全部链接
+                # 10-Q: use only the first link; 10-K: keep all links
                 if use_part_detection:
                     first_link = row_links[0] if row_links else None
                     if first_link:
@@ -824,43 +824,43 @@ class BaseHtmlParser:
         """
         if soup is None:
             return []
-        # 辅助函数：判断元素是否为合适的容器边界
+        # Helper: determine whether an element is a suitable container boundary
         def is_suitable_container(element) -> bool:
-            """判断元素是否为合适的处理容器"""
-            # 使用鸭式类型判断，避免 Tag 未绑定或类型错误
+            """Check if the element is a suitable processing container"""
+            # Use duck typing to avoid unbound Tag or type errors
             if not hasattr(element, "find_all") or not hasattr(element, "get_text"):
                 return False
             
-            # 获取元素文本长度和链接数量
+            # Get element text length and link count
             text = element.get_text(strip=True)
             
-            # 查找带有 href=# 的链接
+            # Find links whose href starts with '#'
             links = []
             for a in element.find_all("a"):
                 href = a.get("href")
                 if href and isinstance(href, str) and href.startswith("#"):
                     links.append(a)
             
-            # 基本条件：有文本内容且不为空
+            # Basic condition: must have non-empty text content
             if not text or len(text) < 5:
                 return False
             
-            # 文本长度合理性检查：不能太短也不能太长
+            # Text length sanity check: neither too short nor too long
             text_length = len(text)
             if text_length < 20 or text_length > 2000:
                 return False
             
-            # 如果包含多个链接，优先处理
+            # Prioritize elements containing multiple links
             if len(links) >= 2:
                 return True
             return False
 
-        # 辅助函数：判断元素边界和分组, 获取可能合适的子元素
+        # Helper: determine boundaries and group elements; collect suitable children
         def find_element_boundaries(container):
-            """找到元素的合理边界，将相关元素分组（返回一维列表，且不添加父元素）"""
+            """Find reasonable boundaries and group related elements (flat list, no parents)"""
             flat: List[Any] = []
             for child in getattr(container, "children", []):
-                # 仅在子元素是合适容器时添加，并递归收集其合适的子节点
+                # Add child only if it is a suitable container; recursively collect suitable descendants
                 if is_suitable_container(child):
                     # flat.append(child)
                     flat.extend(find_element_boundaries(child))
@@ -869,12 +869,12 @@ class BaseHtmlParser:
                 flat.append(container)
             return flat
 
-        # 获取顶层容器
+        # Get the top-level container
         body = soup.find("body") or soup
-        # 首先查找包含多个链接的大容器
+        # First, find large containers that include multiple links
         multi_link_containers = []
         for container in body.children:
-            # 查找带有 href=# 的链接
+            # Find links whose href starts with '#'
             if not hasattr(container, "find_all") or not hasattr(container, "get_text"):
                 continue
             
@@ -884,9 +884,9 @@ class BaseHtmlParser:
                 if href and isinstance(href, str) and href.startswith("#"):
                     links.append(a)
             
-            if len(links) >= 2:  # 包含多个链接的容器
+            if len(links) >= 2:  # container with multiple links
                 text_content = container.get_text(strip=True)
-                if text_content and len(text_content) > 20:  # 有足够的文本内容
+                if text_content and len(text_content) > 20:  # has sufficient text content
                     multi_link_containers.append(container)
 
         results_tables = []
@@ -902,22 +902,22 @@ class BaseHtmlParser:
                     continue
                 if hasattr(div, 'get') and div.get('style'):
                     style = div.get('style', '')
-                    # 提取 top 位置
+                    # Extract top position
                     top_match = re.search(r'top:(\d+(?:\.\d+)?)px', style)
                     if top_match:
                         top_pos = float(top_match.group(1))
                         positioned_divs.append((top_pos, div))
                     else:
-                        # 如果没有 top 样式，使用默认位置 0
+                        # If no top style, use default position 0
                         positioned_divs.append((0, div))
                 else:
-                    # 如果没有样式信息，使用默认位置 0
+                    # If no style info, use default position 0
                     positioned_divs.append((0, div))
         
-        # 按位置排序
+        # Sort by position
         positioned_divs.sort(key=lambda x: x[0])
         
-        # 使用通用分组与处理逻辑消除重复代码
+        # Use shared grouping and processing logic to avoid duplication
         rows = self._group_divs_by_position(positioned_divs)
         table_links = self._process_div_rows(rows, use_part_detection)
         return [table_links] if table_links else []
@@ -965,7 +965,7 @@ class BaseHtmlParser:
 
         positioned_divs.sort(key=lambda x: x[0])
 
-        # 使用通用分组与处理逻辑消除重复代码
+        # Use shared grouping and processing logic to avoid duplication
         rows = self._group_divs_by_position(positioned_divs)
         table_links = self._process_div_rows(rows, use_part_detection)
         return [table_links] if table_links else []
@@ -990,7 +990,7 @@ class BaseHtmlParser:
                     table_item_count += 1
             table_count_map[table_index] = table_item_count
 
-        # 将 table_item_count <= 1 的 table 移到末尾；若所有 table 均 <= 1 则不处理
+        # Move tables with table_item_count <= 1 to the end; if all are <= 1, keep order
         if table_count_map and (max(table_count_map.values()) > 0):
             greater = [t for i, t in enumerate(tables) if table_count_map.get(i, 0) > 0]
             less_eq = [t for i, t in enumerate(tables) if table_count_map.get(i, 0) < 1]

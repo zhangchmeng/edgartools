@@ -9,20 +9,20 @@ from edgar.files.extract_financial.base import PageContent
 
 
 class FinancialStatementExtractionResult(BaseModel):
-    """财务报表提取结果模型"""
+    """Financial statement extraction result model"""
 
-    success: bool = Field(False, description="是否成功提取")
-    method: Optional[str] = Field(None, description="使用的分割方法")
-    page_numbers: List[int] = Field(default_factory=list, description="页码列表")
+    success: bool = Field(False, description="Whether extraction succeeded")
+    method: Optional[str] = Field(None, description="Splitting method used")
+    page_numbers: List[int] = Field(default_factory=list, description="List of page numbers")
     page_contents: Dict[int, PageContent] = Field(
-        default_factory=dict, description="页面内容字典"
+        default_factory=dict, description="Page content dictionary"
     )
     page_contents_elements: List[BeautifulSoup] = Field(
-        default_factory=list, description="页面内容元素列表"
+        default_factory=list, description="List of page content elements"
     )
-    total_pages: int = Field(0, description="总页数")
-    soup: Optional[BeautifulSoup] = Field(None, description="BeautifulSoup对象")
-    error: Optional[str] = Field(None, description="错误信息")
+    total_pages: int = Field(0, description="Total pages")
+    soup: Optional[BeautifulSoup] = Field(None, description="BeautifulSoup object")
+    error: Optional[str] = Field(None, description="Error message")
 
     class Config:
         arbitrary_types_allowed = True
@@ -31,36 +31,37 @@ class FinancialStatementExtractionResult(BaseModel):
 
 def extract_financial_statement(html_content: str) -> FinancialStatementExtractionResult:
     """
-    从HTML内容中提取财务报表, 先后尝试HRPageSplitter ContainerPageSplitter StylePageSplitter 方法
-    
+    Extract financial statements from HTML content, trying HRPageSplitter,
+    ContainerPageSplitter, then StylePageSplitter in order.
+
     Args:
-        html_content (str): HTML内容
-        
+        html_content (str): HTML content
+
     Returns:
-        FinancialStatementExtractionResult: 结构化的财务报表提取结果
+        FinancialStatementExtractionResult: Structured extraction result
     """
-    # 输入验证
+    # Input validation
     if not html_content or not isinstance(html_content, str):
         return _create_error_result("无效的HTML内容输入")
     
-    # 定义分割器列表，按优先级排序
+    # Define splitters in priority order
     splitters = [
         ("HRPageSplitter", HRPageSplitter()),
         ("ContainerPageSplitter", ContainerPageSplitter()),
         ("StylePageSplitter", StylePageSplitter())
     ]
     
-    # 记录每个分割器的结果
+    # Record each splitter's result
     results = {}
     
     for splitter_name, splitter in splitters:
         try:
-            # 尝试使用当前分割器提取页码
+            # Try the current splitter to extract page numbers
             extraction_result, soup = splitter.extract_page_numbers(html_content)
             
-            # 检查提取结果的质量
+            # Check result quality
             page_count = len(extraction_result.page_numbers)
-            # 记录结果
+            # Record the result
             results[splitter_name] = {
                 "success": page_count > 0,
                 "page_count": page_count,
@@ -69,7 +70,7 @@ def extract_financial_statement(html_content: str) -> FinancialStatementExtracti
                 "soup": soup
             }
     
-            # 如果找到了页码，返回结果
+            # If page numbers were found, return the result
             if page_count > 0:
                 return _create_success_result(
                     method=splitter_name,
@@ -81,7 +82,7 @@ def extract_financial_statement(html_content: str) -> FinancialStatementExtracti
                 )
                 
         except Exception as e:
-            # 记录错误但继续尝试下一个分割器
+            # Record the error but continue to the next splitter
             results[splitter_name] = {
                 "success": False,
                 "error": str(e),
@@ -89,13 +90,13 @@ def extract_financial_statement(html_content: str) -> FinancialStatementExtracti
             }
             continue
     
-    # 如果所有分割器都失败了，返回失败结果
+    # If all splitters fail, return an error result
     return _create_error_result(f"所有分割器都未能成功提取页码。尝试结果: {results}")
 
 
 
 def _create_success_result(method: str, page_numbers: List[int], page_contents: Dict[int, PageContent], page_contents_elements: List[BeautifulSoup], total_pages: int, soup: BeautifulSoup) -> FinancialStatementExtractionResult:
-    """创建成功结果"""
+    """Create a success result"""
     return FinancialStatementExtractionResult(
         success=True,
         method=method,
@@ -110,7 +111,7 @@ def _create_success_result(method: str, page_numbers: List[int], page_contents: 
 
 
 def _create_error_result(error_message: str) -> FinancialStatementExtractionResult:
-    """创建错误结果"""
+    """Create an error result"""
     return FinancialStatementExtractionResult(
         success=False,
         method=None,
@@ -123,43 +124,43 @@ def _create_error_result(error_message: str) -> FinancialStatementExtractionResu
     )
 
 
-# 测试函数
+# Test函数
 if __name__ == "__main__":
-    # 测试extract_financial_statement函数
+    # Testextract_financial_statement函数
     # html_file_path = "/Users/chenghao.zhang/Documents/secfile/edgar/0000908311-25-000017.html"
     html_file_path = "/Users/chenghao.zhang/Documents/secfile/extract_financial/test.html"
     
     try:
-        # 读取HTML文件
+        # Read HTML file
         with open(html_file_path, "r", encoding="utf-8") as f:
             html_content = f.read()
 
-        print("=== extract_financial_statement 函数测试 ===")
-        print(f"测试文件: {html_file_path}")
-        print(f"文件大小: {len(html_content):,} 字符\n")
+        print("=== extract_financial_statement Function Test ===")
+        print(f"Test file: {html_file_path}")
+        print(f"file size: {len(html_content):,} characters\n")
         
-        # 测试函数
+        # Test function
         result = extract_financial_statement(html_content)
         
-        print("提取结果:")
-        print(f"  成功: {result.success}")
-        print(f"  使用方法: {result.method}")
-        print(f"  总页数: {result.total_pages}")
-        print(f"  页码列表: {result.page_numbers}")
-        print(f"  错误信息: {result.error}")
+        print("Extraction result:")
+        print(f"  success: {result.success}")
+        print(f"  method used: {result.method}")
+        print(f"  total pages: {result.total_pages}")
+        print(f"  page number list: {result.page_numbers}")
+        print(f"  error message: {result.error}")
         
         if result.success:
-            print(f"  页面内容数量: {len(result.page_contents)}")
-            # 显示前几个页面的内容摘要
+            print(f"  page content count: {len(result.page_contents)}")
+            # Show summary of first few pages
             for i, (page_num, content) in enumerate(list(result.page_contents.items())[:3]):
                 text_preview = content.text_content[:100] + "..." if len(content.text_content) > 100 else content.text_content
-                print(f"  页面 {page_num} 内容预览: {text_preview}")
+                print(f"  page {page_num} content preview: {text_preview}")
         
     except FileNotFoundError:
-        print(f"错误: 找不到文件 {html_file_path}")
-        print("请确保HTML文件存在")
+        print(f"Error: File not found {html_file_path}")
+        print("Please ensure the HTML file exists")
     except Exception as e:
-        print(f"测试过程中发生错误: {e}")
+        print(f"Error occurred during test: {e}")
         import traceback
         traceback.print_exc()
 

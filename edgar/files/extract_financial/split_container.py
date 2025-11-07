@@ -3,35 +3,35 @@ from edgar.files.extract_financial.base import BasePageSplitter, PageContent
 
 
 class ContainerPageSplitter(BasePageSplitter):
-    """基于容器元素的页码分割器"""
+    """Page number splitter based on container elements"""
 
     def extract_page_numbers(self, html_content: str):
         """
-        通过查找包含F-数字的容器元素来提取页码
+        Extract page numbers by finding container elements that contain F-numbers.
 
         Args:
-            html_content: HTML内容字符串
+            html_content: HTML content string
 
         Returns:
-            PageNumberExtractionResult: 结构化的页码提取结果
+            PageNumberExtractionResult: Structured page number extraction result
         """
         """
-        # 第一步：找到所有包含页码的元素
+        # Step 1: find all elements that contain page numbers
         all_page_elements = self._find_all_page_elements(soup, target_tags)
         
-        # 第二步：过滤掉父容器，只保留最深层的子元素
+        # Step 2: filter out parent containers, keep the deepest child elements
         filtered_elements = self._filter_deepest_elements(all_page_elements)
         
-        # 第三步：按标签类型分类页码信息
+        # Step 3: classify page numbers by tag type
         tag_page_info = self._classify_by_tag_type(filtered_elements)
 
-        # 第四步：对每种标签类型的页码进行排序和连续性检查
+        # Step 4: sort and check continuity for each tag type
         valid_tag_pages = self._validate_tag_sequences(tag_page_info)
 
-        # 第五步：选择最优的标签类型
+        # Step 5: select the best tag type
         best_tag_name = self._select_best_tag_type(valid_tag_pages)
 
-        # 第六步：处理最优标签类型的页码
+        # Step 6: process page numbers for the best tag type
         if best_tag_name and best_tag_name in valid_tag_pages:
             page_numbers, page_contents = self._process_best_tag_pages(
                 soup, valid_tag_pages[best_tag_name]
@@ -42,16 +42,16 @@ class ContainerPageSplitter(BasePageSplitter):
         page_numbers = []
         page_contents = {}
 
-        # 查找所有包含页码的容器元素
+        # Find all container elements that contain page numbers
         sorted_containers = self._find_page_containers(soup)
 
         if not sorted_containers:
             return self._create_standard_result([], {}), soup
 
-        # 找到最长的有序子序列
-        # 存在重复页码，需要找到最长的有序子序列
-        # 会出现目录与页码同时存在的情况，html 全部都是table与td元素
-        # issue2 拿到的内容均为目录，如果正文不带页脚，处理将丢弃找到的内容，如果页码不足五页，认为内容不合法，丢弃内容
+        # Find the longest ordered subsequence
+        # Handle duplicate page numbers by selecting the longest ordered subsequence
+        # Table of contents and page numbers may coexist; HTML may be entirely table/td elements
+        # Issue 2: when content is all TOC, if the body lacks footers and fewer than five pages are found, treat as invalid and discard
         sorted_containers = self._find_longest_ordered_subsequence(
             sorted_containers
         )
@@ -59,10 +59,10 @@ class ContainerPageSplitter(BasePageSplitter):
         if not sorted_containers:
             return self._create_standard_result([], {}), soup
 
-        # 按页码顺序处理容器
+        # Process containers in page-number order
         prev_container = None
 
-        # 处理每个页码容器
+        # Process each page-number container
         for page_number, container in sorted_containers:
             # container.parents
             while container.parent:
@@ -77,8 +77,8 @@ class ContainerPageSplitter(BasePageSplitter):
             if prev_container is None:
                 prev_container = self._find_page_start(container)
 
-            # 确定页面内容范围：从当前容器到下一个容器之间的所有元素
-            # 提取页面内容元素
+            # Determine the page content range: all elements between the previous and current containers
+            # Extract page content elements
             # if page_number == 27:
             #     import pdb;pdb.set_trace()
             page_elements = self._extract_container_content(
@@ -87,13 +87,13 @@ class ContainerPageSplitter(BasePageSplitter):
 
             if page_elements:
                 prev_container.extract()
-                # 创建页面内容对象
+                # Create page content object
                 page_content = self._create_page_content(
                     page_number, page_elements
                 )
                 page_contents[page_number] = page_content
 
-                # 添加到页码列表
+                # Add to page number list
                 if page_number not in page_numbers:
                     page_numbers.append(page_number)
             prev_container = container
@@ -101,10 +101,10 @@ class ContainerPageSplitter(BasePageSplitter):
         return self._create_standard_result(page_numbers, page_contents), soup
 
     def _find_page_containers(self, soup):
-        """查找所有包含页码的容器元素"""
+        """Find all container elements that include page numbers"""
         page_containers = []
 
-        # 查找可能包含页码的标签
+        # Candidate tags that may contain page numbers
         target_tags = [
             "div",
             "span",
@@ -122,18 +122,18 @@ class ContainerPageSplitter(BasePageSplitter):
             page_numbers = self._search_f_number_pattern(text_content)
 
             if page_numbers:
-                # 只取第一个找到的页码
+                # Keep only the first page number found
                 page_containers.append((page_numbers[0], tag))
 
-        # 过滤掉重复的页码，保留最深层的容器
+        # Deduplicate page numbers; keep the deepest container
         return self._filter_deepest_containers(page_containers)
 
     def _filter_deepest_containers(self, page_containers):
-        """过滤掉父容器，只保留最深层的容器"""
+        """Filter out parent containers; keep only the deepest containers"""
         filtered_containers = []
 
         for page_num, container in page_containers:
-            # 检查是否有子元素也包含相同的页码
+            # Check whether any child also contains the same page number
             has_child_with_same_page = False
             for other_page_num, other_container in page_containers:
                 if (
@@ -144,18 +144,19 @@ class ContainerPageSplitter(BasePageSplitter):
                     has_child_with_same_page = True
                     break
 
-            # 如果没有子元素包含相同页码，则保留此容器
+            # If no child contains the same page number, keep this container
             if not has_child_with_same_page:
-                # 检查容器是否包含a标签
+                # Ensure the container does not contain an anchor tag
                 if not container.find("a"):
                     filtered_containers.append((page_num, container))
 
         return filtered_containers
 
     def _extract_container_content(self, prev_container, current_container):
-        """按文档顺序逐个提取并删除 prev_container 与 current_container 之间的所有节点。
-        参考 _extract_page_content_between_hrs 的“next_sibling 优先，缺失时向上回溯祖先的 next_sibling”的遍历策略，
-        同时安全跳过 current_container 的祖先，避免误删容器本身。
+        """Iterate in document order and remove all nodes between prev_container and current_container.
+        Follow the traversal strategy of _extract_page_content_between_hrs:
+        prefer next_sibling; when missing, backtrack to ancestors' next_sibling.
+        Safely skip ancestors of current_container to avoid deleting the container itself.
         """
         removed_elements = []
         if prev_container is None or current_container is None:
@@ -163,12 +164,12 @@ class ContainerPageSplitter(BasePageSplitter):
         if prev_container is current_container:
             return removed_elements
 
-        # 预计算 current_container 的祖先集合（用于快速判断）
+        # Precompute the ancestor set of current_container for quick checks
         current_ancestors = set(list(current_container.parents))
 
-        # 选择遍历起点：
-        # - 若 prev 是 current 的祖先，则从其子树内开始（prev.next_element）；
-        # - 否则，从 prev 子树结束后的第一个兄弟或祖先的下一个兄弟开始（横向越过子树）。
+        # Choose the traversal starting point:
+        # - If prev is an ancestor of current, start within its subtree (prev.next_element);
+        # - Otherwise, start at the first sibling after prev's subtree or the ancestor's next sibling (skip across subtrees).
         if prev_container in current_ancestors:
             node = getattr(prev_container, "next_element", None)
         else:
@@ -182,14 +183,14 @@ class ContainerPageSplitter(BasePageSplitter):
                     parent = getattr(parent, "parent", None)
             node = ns
 
-        # 线性遍历并删除，直到遇到 current_container
+        # Linearly traverse and remove until reaching current_container
         while node is not None and node is not current_container:
-            # 如果当前节点是 current_container 的祖先，不删除该节点，深入其子树
+            # If the current node is an ancestor of current_container, do not delete it; dive into its subtree
             if node in current_ancestors:
                 node = getattr(node, "next_element", None)
                 continue
 
-            # 预先计算删除后的下一个候选节点：优先使用 next_sibling，其次向上回溯祖先的 next_sibling
+            # Precompute the next candidate after removal: prefer next_sibling, otherwise backtrack to the ancestor's next_sibling
             ns = getattr(node, "next_sibling", None)
             if ns is None:
                 parent = getattr(node, "parent", None)
@@ -199,31 +200,32 @@ class ContainerPageSplitter(BasePageSplitter):
                         break
                     parent = getattr(parent, "parent", None)
 
-            # 删除并收集当前节点（extract 返回被移除的节点），一次性越过其子树
+            # Remove and collect the current node (extract returns the removed node), skipping its subtree
             removed_elements.append(node.extract())
 
-            # 进入下一个候选节点
+            # Move to the next candidate node
             node = ns
         removed_elements.append(current_container)
         return removed_elements
 
     def _find_page_start(self, f_number_container):
         """
-        向上查找页面的起始位置
+        Search upward to find the start position of the page.
         """
-        # TODO 默认认为 同级元素且仅包含数字的元素可能是上一页的结尾
+        
+        # TODO: Assume a sibling element with only digits may mark the end of the previous page
         current_element = f_number_container.previous_element
-        page_start = f_number_container  # 默认从F-number容器开始
+        page_start = f_number_container  # Default to starting from the F-number container
 
-        # 向前查找，直到找到另一个F-number或到达文档开始
+        # Search backward until another F-number is found or until the start of the document
         while current_element:
-            # 检查当前元素是否包含F-number模式或纯数字
+            # Check whether the current element matches an F-number pattern or pure digits
             if hasattr(current_element, "get_text"):
                 text_content = self._extract_text_content(current_element)
-                # # 检查是否包含F-number
+                # # Check whether it contains F-number
                 # if self._search_f_number_pattern(text_content):
                 #     break
-                # 检查是否为纯数字文本(同级元素)
+                # Check if it is pure digit text (sibling element)
                 if (
                     getattr(current_element, "parent", None) is not None
                     and getattr(f_number_container, "parent", None) is not None
@@ -235,33 +237,33 @@ class ContainerPageSplitter(BasePageSplitter):
                     )
                 ):
                     break
-            # 更新页面起始位置
+            # Update page start position
             page_start = current_element
             current_element = current_element.previous_element
         return page_start
 
     def _create_page_content(self, page_number, elements):
-        """创建页面内容对象"""
-        # 创建页面soup
+        """Create page content object"""
+        # Create page soup
         page_soup = BeautifulSoup("", "html.parser")
         page_body = page_soup.new_tag("body")
         page_soup.append(page_body)
 
-        # 批量添加元素（复制而不是移动）
+        # Add elements in bulk (copy instead of move)
         for element in elements:
-            if hasattr(element, "name"):  # 是标签元素
-                # 创建元素的深拷贝
+            if hasattr(element, 'name'):  # is a tag element
+                # Create a deep copy of the element
                 element_copy = BeautifulSoup(str(element), "html.parser")
                 for child in element_copy.children:
                     if hasattr(child, "name"):
                         page_body.append(child)
-            elif hasattr(element, "string"):  # 是文本节点
+            elif hasattr(element, 'string'):  # is a text node
                 page_body.append(element.string)
 
-        # 调用页码拆分和清理方法
+        # Call page separator extraction and cleanup
         # separators, cleaned_soup = self._extract_page_separators(page_soup, page_number)
 
-        # 创建页面内容对象
+        # Create page content object
         return PageContent(
             page_number=page_number,
             page_soup=page_soup,
@@ -271,30 +273,30 @@ class ContainerPageSplitter(BasePageSplitter):
 
     def _find_longest_ordered_subsequence(self, containers):
         """
-        找到最长的有序子序列，处理重复页码的情况
+        Find the longest ordered subsequence to handle duplicate page numbers.
 
         Args:
-            containers: [(page_number, container), ...] 的列表
+            containers: list of tuples [(page_number, container), ...]
 
         Returns:
-            最长有序子序列的容器列表
+            The container list of the longest ordered subsequence
         """
         if not containers:
             return []
 
-        # 按页码分组，每个页码保留最后一个出现的容器
+        # 按page number分组，每个page number保留最后一个出现的container
         page_dict = {}
         for page_num, container in containers:
             page_dict[page_num] = container
 
-        # 按页码排序
+        # 按page numbersort
         sorted_pages = sorted(page_dict.items())
 
         # 找到最长的连续有序子序列
         if not sorted_pages:
             return []
 
-        # 从第一个页码开始找最长连续序列
+        # 从第一个page number开始找最长连续序列
         longest_sequence = []
         current_sequence = [sorted_pages[0]]
 
@@ -302,21 +304,21 @@ class ContainerPageSplitter(BasePageSplitter):
             current_page, current_container = sorted_pages[i]
             prev_page, prev_container = current_sequence[-1]
 
-            # 如果当前页码是连续的，加入当前序列
+            # 如果当前page number是连续的，加入当前序列
             if current_page == prev_page + 1:
                 current_sequence.append((current_page, current_container))
             else:
-                # 如果不连续，检查当前序列是否更长
+                # 如果不连续，check当前序列是否更长
                 if len(current_sequence) > len(longest_sequence):
                     longest_sequence = current_sequence[:]
                 # 开始新的序列
                 current_sequence = [(current_page, current_container)]
 
-        # 检查最后一个序列
+        # check最后一个序列
         if len(current_sequence) > len(longest_sequence):
             longest_sequence = current_sequence[:]
 
-        # 如果没有找到合适的序列，返回所有去重后的页码
+        # 如果没有找到合适的序列，Returns所有去重后的page number
         if len(longest_sequence) < 2:
             return sorted_pages
 
@@ -324,7 +326,7 @@ class ContainerPageSplitter(BasePageSplitter):
 
 
 if __name__ == "__main__":
-    # 测试ContainerPageSplitter
+    # TestContainerPageSplitter
     # html_file_path = "/Users/chenghao.zhang/Documents/secfile/edgar/0000908311-25-000017.html"
     html_file_path = "/Users/chenghao.zhang/Documents/secfile/extract_financial/test.html"
 
@@ -332,28 +334,28 @@ if __name__ == "__main__":
         with open(html_file_path, "r", encoding="utf-8") as f:
             html_content = f.read()
 
-        print("=== ContainerPageSplitter 测试 ===")
-        print(f"测试文件: {html_file_path}")
-        print(f"文件大小: {len(html_content):,} 字符\n")
+        print("=== ContainerPageSplitter Test ===")
+        print(f"Test file: {html_file_path}")
+        print(f"file size: {len(html_content):,} 字符\n")
 
-        # 测试 Container 分割器
-        print("测试 Container 分割器:")
+        # Test Container split器
+        print("Test Container splitter:")
         container_splitter = ContainerPageSplitter()
         container_results, soup = container_splitter.extract_page_numbers(
             html_content
         )
 
-        print(f"   找到页码: {container_results.page_numbers}")
-        print(f"   总页码数: {len(container_results.page_numbers)}")
-        print(f"   页面内容数: {len(container_results.page_contents)}")
+        print(f"   Found page numbers: {container_results.page_numbers}")
+        print(f"   Total page count: {len(container_results.page_numbers)}")
+        print(f"   Page content count: {len(container_results.page_contents)}")
         # container_results.page_contents[1].text_content
 
 
     except FileNotFoundError:
-        print(f"错误: 找不到文件 {html_file_path}")
-        print("请确保HTML文件存在")
+        print(f"Error: File not found {html_file_path}")
+        print("Please ensure the HTML file exists")
     except Exception as e:
-        print(f"测试过程中发生错误: {e}")
+        print(f"Error during test: {e}")
         import traceback
 
         traceback.print_exc()

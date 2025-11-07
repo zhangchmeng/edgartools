@@ -412,16 +412,18 @@ class HTMLCatalogExtractor:
 
     def find_table_of_contents(self) -> List[BeautifulSoup]:
         """
-        查找所有TABLE OF CONTENTS元素，根据get_text()方法查找当前向下2000个字符的内容
-        确保标签完整闭合，判断区间内的element是否为目录
+        Find all TABLE OF CONTENTS elements, then examine up to 2000 characters
+        downstream via get_text() to determine if the range forms a TOC.
+        Ensure tags are properly closed and judge whether elements in the range
+        constitute a table of contents.
 
         Returns:
-            包含目录的BeautifulSoup元素列表
+            List of BeautifulSoup elements that contain the table of contents
         """
         if not self.soup:
             return []
 
-        # 查找包含"TABLE OF CONTENTS"文本的元素
+        # Find elements containing the text "TABLE OF CONTENTS"
         toc_elements = self.soup.find_all(
             string=re.compile("TABLE OF CONTENTS", re.IGNORECASE)
         )
@@ -431,38 +433,38 @@ class HTMLCatalogExtractor:
 
         toc_containers = []
 
-        # 处理每个找到的TABLE OF CONTENTS元素
+        # Process each found TABLE OF CONTENTS element
         for toc_element in toc_elements:
             found_container = self._find_toc_in_2000_chars(toc_element)
 
             if found_container:
                 toc_containers.extend(found_container)
 
-        # 去重，避免重复的容器，并去除被包含的子项
+        # Deduplicate: avoid repeated containers and remove contained children
         unique_containers = []
         for container in toc_containers:
-            # 检查当前容器是否已存在或被其他容器包含
+            # Check whether the current container already exists or is contained by another
             is_contained = False
             containers_to_remove = []
 
             for existing_container in unique_containers:
-                # 检查当前容器是否被已存在的容器包含
+                # Check whether the current container is contained by an existing one
                 if self._is_element_contained_in(
                     container, existing_container
                 ):
                     is_contained = True
                     break
-                # 检查已存在的容器是否被当前容器包含
+                # Check whether an existing container is contained by the current one
                 elif self._is_element_contained_in(
                     existing_container, container
                 ):
                     containers_to_remove.append(existing_container)
 
-            # 移除被当前容器包含的已存在容器
+            # Remove existing containers that are contained by the current container
             for container_to_remove in containers_to_remove:
                 unique_containers.remove(container_to_remove)
 
-            # 如果当前容器没有被包含，则添加到结果中
+            # If the current container is not contained, add it to the result
             if not is_contained:
                 unique_containers.append(container)
 
@@ -497,38 +499,39 @@ class HTMLCatalogExtractor:
 
     def _find_toc_in_2000_chars(self, start_element) -> List[BeautifulSoup]:
         """
-        从指定元素开始，在2000字符范围内查找目录元素
-        确保标签完整闭合，将整个范围内的元素作为整体判断
+        Starting from the given element, search for TOC elements within a
+        2000-character range. Ensure tags are properly closed and treat the
+        entire range as a whole for TOC detection.
 
         Args:
-            start_element: 起始元素
+            start_element: Starting element
 
         Returns:
-            找到的目录容器列表
+            List of found TOC containers
         """
         toc_containers = []
         char_count = 0
-        elements_in_range = []  # 收集2000字符范围内的所有元素
+        elements_in_range = []  # Collect all elements within the 2000-character range
 
-        # 使用更全面的元素遍历策略
+        # Use a more comprehensive element traversal strategy
         elements_to_check = []
 
-        # 1. 从当前元素开始，获取所有后续元素（包括兄弟元素和子元素）
+        # 1. From the current element, gather all subsequent elements (siblings and children)
         current = start_element
         while current and char_count < 2000:
-            # 首先尝试获取下一个兄弟元素
+            # First try to get the next sibling element
             next_element = current.find_next_sibling()
 
-            # 如果没有兄弟元素，尝试获取父元素的下一个兄弟
+            # If no sibling exists, try the parent's next sibling
             if not next_element:
                 parent = current.parent
                 while parent and not next_element:
                     next_element = parent.find_next_sibling()
                     parent = parent.parent
 
-            # 如果还是没有找到，尝试深度优先搜索子元素
+            # If still not found, perform depth-first search on children
             if not next_element:
-                # 查找当前元素的所有子元素
+                # Find all children of the current element
                 children = current.find_all(recursive=True)
                 for child in children:
                     if child not in elements_to_check:
@@ -537,22 +540,22 @@ class HTMLCatalogExtractor:
 
             current = next_element
 
-            # 获取当前元素的文本内容
+            # Get the current element's text content
             element_text = current.get_text(strip=True)
             element_text_len = len(element_text)
 
-            # 检查是否会超过2000字符限制
+            # Check if the 2000-character limit would be exceeded
             if char_count + element_text_len > 2000:
-                # 如果是重要的完整元素，仍然包含进来
+                # If the element is a significant complete element, still include it
                 if self._is_complete_element(current):
                     elements_in_range.append(current)
                 break
 
-            # 累加字符数并添加到范围内元素列表
+            # Accumulate character count and add to the range list
             char_count += element_text_len
             elements_in_range.append(current)
 
-            # 同时检查当前元素的直接子元素
+            # Also check the current element's direct children
             direct_children = current.find_all(recursive=False)
             for child in direct_children:
                 child_text = child.get_text(strip=True)
@@ -561,7 +564,7 @@ class HTMLCatalogExtractor:
                     if child not in elements_in_range:
                         elements_in_range.append(child)
 
-        # 添加之前收集的子元素
+        # Add previously collected child elements
         for element in elements_to_check:
             element_text = element.get_text(strip=True)
             if char_count + len(element_text) <= 2000:
@@ -569,7 +572,7 @@ class HTMLCatalogExtractor:
                 if element not in elements_in_range:
                     elements_in_range.append(element)
 
-        # 第二步：将整个范围作为整体进行目录判断
+        # Step 2: treat the entire range as a whole for TOC detection
         if elements_in_range:
             toc_container = self._analyze_range_as_toc(elements_in_range)
             if toc_container:
@@ -661,18 +664,18 @@ class HTMLCatalogExtractor:
         self, elements_in_range
     ) -> List[BeautifulSoup]:
         """
-        在范围内查找目录表格结构
+        Find table-based TOC structures within the range.
 
         Args:
-            elements_in_range: 范围内的所有元素列表
+            elements_in_range: List of all elements within the range
 
         Returns:
-            找到的目录表格容器列表
+            List of TOC table containers found
         """
         toc_tables = []
 
         for element in elements_in_range:
-            # 查找表格元素
+            # Find table elements
             tables = (
                 element.find_all("table")
                 if element.name != "table"
@@ -680,9 +683,9 @@ class HTMLCatalogExtractor:
             )
 
             for table in tables:
-                # 检查表格是否符合目录特征
+                # Check whether the table matches TOC characteristics
                 if self._is_toc_table_structure(table):
-                    # 找到包含此表格的最近的div容器
+                    # Find the nearest div container that contains this table
                     container = table.find_parent("div")
                     if container and container not in toc_tables:
                         toc_tables.append(container)
@@ -695,24 +698,24 @@ class HTMLCatalogExtractor:
         self, elements_in_range
     ) -> List[BeautifulSoup]:
         """
-        在范围内查找目录div结构
+        Find div-based TOC structures within the range.
 
         Args:
-            elements_in_range: 范围内的所有元素列表
+            elements_in_range: List of all elements within the range
 
         Returns:
-            找到的目录div容器列表
+            List of TOC div containers found
         """
         toc_divs = []
 
         for element in elements_in_range:
-            # 查找div元素
+            # Find div elements
             divs = (
                 element.find_all("div") if element.name != "div" else [element]
             )
 
             for div in divs:
-                # 检查div是否符合目录特征
+                # Check whether the div matches TOC characteristics
                 if self._is_toc_div_structure(div):
                     if div not in toc_divs:
                         toc_divs.append(div)

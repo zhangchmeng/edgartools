@@ -27,7 +27,7 @@ from edgar.files.timeout_utils import monitor_performance
 
 
 def time_section(section_name: str):
-    """代码段时间测量上下文管理器"""
+    """Context manager for timing code sections"""
 
     class TimingContext:
         def __init__(self, name):
@@ -36,17 +36,17 @@ def time_section(section_name: str):
 
         def __enter__(self):
             self.start_time = time.perf_counter()
-            logging.debug(f"[TIMING] {self.name} - 开始")
+            logging.debug(f"[TIMING] {self.name} - start")
             return self
 
         def __exit__(self, exc_type, exc_val, exc_tb):
             end_time = time.perf_counter()
             duration = end_time - self.start_time
             if exc_type is None:
-                logging.info(f"[TIMING] {self.name} - 完成: {duration:.3f}s")
+                logging.info(f"[TIMING] {self.name} - done: {duration:.3f}s")
             else:
                 logging.warning(
-                    f"[TIMING] {self.name} - 异常退出: {duration:.3f}s"
+                    f"[TIMING] {self.name} - exited with exception: {duration:.3f}s"
                 )
 
     return TimingContext(section_name)
@@ -129,7 +129,7 @@ class AssembleText:
         )
         return ChunkedDocument.clean_part_line(merged_text)
 
-    # 定义一次性的忽略标签集合
+    # Define a one-time set of tags to ignore
     IGNORE_TAGS: Set[str] = {
         "script",
         "style",
@@ -143,7 +143,7 @@ class AssembleText:
 
     @staticmethod
     def is_content_element(element: Tag) -> bool:
-        """检查元素是否为有效内容元素"""
+        """Check whether the element is a valid content element"""
         return not (
             hasattr(element, "name")
             and element.name
@@ -171,7 +171,7 @@ class AssembleText:
         if not html_content or not item_links:
             return {}
             
-        # Parse HTML content - 使用缓存避免重复解析
+        # Parse HTML content - use cache to avoid repeated parsing
         root: Tag = HtmlDocument.get_root(html_content)
         start_element = clean_html_root(root)
         decompose_page_numbers(start_element)
@@ -182,12 +182,12 @@ class AssembleText:
             logging.error("Failed to parse HTML content")
             return {}
 
-        # 预先分配足够大小的结果字典
+        # Pre-allocate a result dictionary of sufficient size
         content_by_link = {}
 
-        # 预处理 item_links 为更高效的格式
+        # Preprocess item_links into a more efficient format
         with time_section("process_item_links"):
-            # 使用集合去重
+            # Use a set to remove duplicates
             link_points = set()
             for item in item_links:
                 if not isinstance(item, (tuple, list)) or len(item) < 2:
@@ -196,34 +196,34 @@ class AssembleText:
                 item_name = item[0]
                 item_id_list = item[1]
 
-                # 统一处理为列表
+                # Normalize to a list
                 if isinstance(item_id_list, str):
                     item_id_list = [item_id_list]
                 elif not isinstance(item_id_list, list):
                     continue
 
-                # 添加每个链接点及其名称
+                # Add each link point and its name
                 for item_id in item_id_list:
                     if item_id and item_name:
-                        # 使用元组以便在集合中去重
+                        # Use tuples to deduplicate within the set
                         link_points.add((item_name, item_id))
 
-            # 转换回列表以便后续处理
+            # Convert back to a list for subsequent processing
             link_points = list(link_points)
 
-        # 一次性查找所有元素
+        # Find all elements in one pass
         with time_section("find_all_elements"):
-            # 使用字典缓存元素查找结果
+            # Use dictionaries to cache element lookup results
             id_elements = {}
             name_elements = {}
 
-            # 优化：使用CSS选择器一次性查找所有ID元素
+            # Optimization: use CSS selectors to find all ID elements in one pass
             for elem in soup.select("[id]"):
                 elem_id = elem.get("id")
                 if elem_id:
                     id_elements[elem_id] = elem
 
-            # 优化：使用CSS选择器一次性查找所有name属性元素
+            # Optimization: use CSS selectors to find all elements with a name attribute in one pass
             for elem in soup.select("a[name]"):
                 elem_name = elem.get("name")
                 if elem_name:
@@ -231,11 +231,11 @@ class AssembleText:
 
         link_element_list = []
         with time_section("create_ordered_links"):
-            # 创建基于文档位置的有序链接点列表
+            # Create an ordered list of link points based on document position
             ordered_links = []
 
             for name, link_id in link_points:
-                # 查找元素（通过ID或name）
+                # Find elements (by ID or name)
                 element = id_elements.get(link_id) or name_elements.get(
                     link_id
                 )
@@ -243,14 +243,14 @@ class AssembleText:
                     link_element_list.append(element)
                     ordered_links.append((name, link_id, element))
 
-            # 优化：使用更高效的位置估算方法
+            # Optimization: use a more efficient position estimation method
             html_str = str(soup)
             if ordered_links:
-                # 创建一个元素到位置的映射，避免重复计算
+                # Create a mapping from element to its position to avoid recalculation
                 element_positions = {}
 
                 for name, link_id, element in ordered_links:
-                    # 使用元素的字符串表示在HTML中的位置作为排序依据
+                    # Use the position of the element's string representation in the HTML as the sort key
                     elem_str = str(element)
                     pos = html_str.find(elem_str)
                     if pos >= 0:
@@ -260,8 +260,8 @@ class AssembleText:
                             "inf"
                         )
 
-                # 根据位置排序
-                # 先按在文档中的位置排序，其次按名称排序，确保稳定且可预期
+                # Sort by position
+                # First by position in the document, then by name, to ensure stable and predictable ordering
                 ordered_links.sort(
                     key=lambda x: (
                         element_positions.get(x, float("inf")),
@@ -269,7 +269,7 @@ class AssembleText:
                     )
                 )
 
-            # 记录匹配到的链接点数量，便于调试空列表问题
+            # Log the number of matched link points to help debug empty list issues
             try:
                 logging.debug(
                     f"assemble_items: matched link count={len(ordered_links)}"
@@ -278,9 +278,9 @@ class AssembleText:
                 pass
 
         with time_section("extract_content_by_links"):
-            # 提取链接点之间的内容
+            # Extract content between link points
             for i, (name, link_id, element) in enumerate(ordered_links):
-                # 创建内容的元组键
+                # Create a tuple key for content
                 # key = ('extracted', name)
                 if isinstance(name, (list, tuple)):
                     key = tuple(name)
@@ -289,7 +289,7 @@ class AssembleText:
 
                 # if key == ('part i', 'Item 3'):
                 #     import pdb;pdb.set_trace()
-                # 确定本节的边界
+                # Determine the boundaries of this section
                 start_element = element
                 end_element = (
                     ordered_links[i + 1][2]
@@ -297,33 +297,33 @@ class AssembleText:
                     else None
                 )
 
-                # 提取起始和结束元素之间的元素
+                # Collect elements between the start and end
                 section_elements = []
                 current = start_element
 
-                # 优化：使用固定大小的缓冲区
+                # Optimization: use a fixed-size buffer
                 section_elements = []
 
-                # 使用更高效的元素遍历方法，并防止重复元素
-                processed_elements = set()  # 用于跟踪已处理的元素ID
-                elements_to_process = [start_element]  # 临时存储需要处理的元素
+                # Use a more efficient element traversal and avoid duplicates
+                processed_elements = set()  # Track processed element IDs
+                elements_to_process = [start_element]  # Temporarily store elements to process
 
-                # 第一阶段：收集所有可能的内容元素（不包含 end_link 本身）
-                # 下一个link的父元素也不应该直接添加，而是需要逐个查看子元素处理
+                # Phase 1: collect all potential content elements (excluding end_link itself)
+                # The next link's parent should also not be added directly; inspect child elements individually
                 jump_elements = [one for one in end_element.parents]  if hasattr(end_element, "parents") else []
 
                 while current and current != end_element:
-                    # 只包含有意义的内容元素
+                    # Include only meaningful content elements
                     if current in jump_elements:
                         pass
                     elif AssembleText.is_content_element(current):
-                        # 获取元素的文本内容
+                        # Get the element's text content
                         elem_content = (
                             current.get_text()
                             if hasattr(current, "get_text")
                             else str(current)
                         )
-                        # 只有当内容不为空时才考虑添加
+                        # Only consider adding when content is not empty
                         if (
                             elem_content
                             and id(current) not in processed_elements
@@ -331,69 +331,69 @@ class AssembleText:
                             elements_to_process.append(current)
                             processed_elements.add(id(current))
 
-                    # 移动到下一个元素
+                    # Move to the next element
                     next_elem = current.next_element
                     if not next_elem or next_elem in link_element_list:
                         break
                     current = next_elem
 
-                # 第二阶段：过滤掉已经被其祖先元素或起始链接包含的元素
-                processed_elements.clear()  # 重置已处理元素集合
+                # Phase 2: filter out elements already contained by their ancestors or the start link
+                processed_elements.clear()  # Reset processed elements set
 
-                # 按照元素在文档中的位置排序（从上到下）
+                # Order elements by their position in the document (top to bottom)
                 for element in elements_to_process:
-                    # 检查元素是否已被处理
+                    # Check whether the element has already been processed
                     if id(element) in processed_elements:
                         continue
 
-                    # 检查当前元素的子元素，将它们标记为已处理
-                    # 仅当 element 是 Tag 才遍历 descendants
+                    # Check the current element's children and mark them as processed
+                    # Only traverse descendants if element is a Tag
                     if hasattr(element, "descendants"):
                         for child in element.descendants:
                             processed_elements.add(id(child))
                     else:
                         processed_elements.add(id(element))
-                    # 将当前元素添加到结果中
+                    # Add the current element to the results
                     section_elements.append(element)
                     processed_elements.add(id(element))
 
-                # 添加或扩展此键的元素
+                # Add or extend elements for this key
                 if key in content_by_link:
                     content_by_link[key].extend(section_elements)
                 else:
                     content_by_link[key] = section_elements
 
-            # 处理介绍内容（第一个链接之前）
+            # Handle intro content (before the first link)
             if ordered_links:
                 first_element = ordered_links[0][2]
                 intro_elements = []
 
-                # 优化：直接使用CSS选择器查找body
+                # Optimization: directly use CSS selectors to find the body
                 body = soup.find("body") or soup
 
                 if body:
-                    # 使用更高效的元素遍历
+                    # Use more efficient element traversal
                     current = body
 
-                    # 使用迭代器而不是递归遍历，并防止重复元素
-                    processed_intro_elements = set()  # 用于跟踪已处理的元素ID
-                    elements_to_process = []  # 临时存储需要处理的元素
+                    # Use an iterator instead of recursion and avoid duplicate elements
+                    processed_intro_elements = set()  # Track processed element IDs
+                    elements_to_process = []  # Temporarily store elements to process
 
-                    # 第一阶段：收集所有可能的内容元素
+                    # Phase 1: collect all potential content elements
                     for element in body.descendants:
                         if element == first_element:
                             break
 
-                        # 只添加有意义的内容元素
+                        # Only add meaningful content elements
                         if AssembleText.is_content_element(element):
-                            # 获取元素的文本内容
+                            # Get the element's text content
                             elem_content = (
                                 element.get_text()
                                 if hasattr(element, "get_text")
                                 else str(element)
                             )
 
-                            # 只有当内容不为空时才考虑添加
+                            # Only consider adding when content is not empty
                             if (
                                 elem_content
                                 and id(element) not in processed_intro_elements
@@ -401,22 +401,22 @@ class AssembleText:
                                 elements_to_process.append(element)
                                 processed_intro_elements.add(id(element))
 
-                    # 第二阶段：过滤掉已经被其祖先元素包含的元素
-                    processed_intro_elements.clear()  # 重置已处理元素集合
+                    # Phase 2: filter out elements already contained by their ancestors
+                    processed_intro_elements.clear()  # Reset processed element set
 
                     for element in elements_to_process:
-                        # 检查元素是否已被处理
+                        # Check whether the element has already been processed
                         if id(element) in processed_intro_elements:
                             continue
 
-                        # 检查当前元素的子元素，将它们标记为已处理
+                        # Check the current element's children and mark them as processed
                         if hasattr(element, "descendants"):
                             for child in element.descendants:
                                 processed_intro_elements.add(id(child))
                         else:
                             processed_intro_elements.add(id(element))
 
-                        # 将当前元素添加到结果中
+                        # Add the current element to the results
                         intro_elements.append(element)
                         processed_intro_elements.add(id(element))
 
@@ -427,7 +427,7 @@ class AssembleText:
         for key, value in content_by_link.items():
             results[key] = AssembleText.assemble_html_document(value)
 
-        # 当未找到任何链接点时，进行兜底：将全文作为 Item 0 返回并提前结束
+        # Fallback when no link points are found: return the entire document as Item 0 and exit early
         if not ordered_links:
             try:
                 body = soup.find("body") or soup
@@ -476,13 +476,13 @@ class AssembleText:
     @staticmethod
     def re_regular_content(results, ordered_links):
         """ Check and fix unreasonable item segmentation results """
-        # 处理 1.第一个item缺失链接问题 2.链接指向页码，导致多个短item都合并到当前页码的第一个item中
-        # 1. 确认切分关键字 默认顺序为：SIGNATURES(不包含)/
-        # 2. 确认第一个item的内容 并将切割后的值附加到当前item
-        # 3. 对于每个其他item的最后20个非空行检查，行开头是否为item，是否应该切分到标准item中
-            # 顺序按照标准 item顺序/link传入顺序 划分
+        # Handle: 1) first item missing link; 2) links pointing to page numbers causing multiple short items to merge into the first item on that page
+        # 1) Determine split keywords; default order: SIGNATURES (excluded)/
+        # 2) Validate the first item's content and append the split part to the current item
+        # 3) For each other item, inspect the last 20 non-empty lines to see if a line starts with the next item header and split accordingly
+            #    Partition according to standard item order / the order of incoming links
 
-        # 无链接点时，直接返回，不进行规范化处理
+        # If there are no link points, return directly and skip normalization
         if not ordered_links:
             logging.debug("re_regular_content: no ordered_links, skip normalization")
             return results
@@ -491,10 +491,10 @@ class AssembleText:
         item0_keys = ("extracted", "Item 0")
 
         item0_content = results.get(item0_keys, "")
-        # 找到 开头为Signature的行，并将文本切分为包含Signature的文本和剩余文本两部分
-        # 上半部分填入results[item0_keys]， 剩余文本附加到 results[first_item]
+        # Find the line starting with "Signature" and split text into two parts: the part containing Signature and the remaining text
+        # Put the first part into results[item0_keys]; append the remaining text to results[first_item]
     
-        # Step 1/2: 处理 Item 0 中的 SIGNATURES 切分
+        # Step 1/2: handle SIGNATURES split within Item 0
         if isinstance(item0_content, str) and item0_content.strip():
             lines = item0_content.splitlines()
             sig_index = None
@@ -503,7 +503,7 @@ class AssembleText:
                 if up.startswith("SIGNATURES") or up.startswith("SIGNATURE"):
                     sig_index = idx
                     break
-            # 如果没找到 SIGNATURES 且 item0_content 内容字符超过10000，使用Exhibits进行分离
+            # If SIGNATURES not found and Item 0 exceeds 10000 chars, split by EXHIBITS/EXHIBIT
             if sig_index is None and len(item0_content) > 10000:
                 for idx, ln in enumerate(lines):
                     up = ln.strip().upper()
@@ -512,12 +512,12 @@ class AssembleText:
                         break
 
             if sig_index is not None:
-                # 从签名行的下一行开始切分，签名行保留在 Item 0
+                # Split starting from the line after the signature; keep the signature line in Item 0
                 if len(lines) > sig_index+1:
                     before = "\n".join(lines[: sig_index + 1]).strip()
                     after = "\n".join(lines[sig_index + 1 :]).strip()
                     results[item0_keys] = before
-                    # 将 after 追加到第一个 item 的内容中
+                    # Append the 'after' part to the first item's content
                     if after:
                         if first_item in results and isinstance(results[first_item], str):
                             appended = (after + "\n" + results[first_item]).strip()
@@ -525,38 +525,38 @@ class AssembleText:
                         else:
                             results[first_item] = after
 
-        # Step 3: 按 ordered_links 顺序检查每个条目的末尾，若出现下一个条目的标题则切分并归并到对应条目
+        # Step 3: check the tail of each item in ordered_links and split/merge when the next item header appears
         """
-        根据 ordered_links 顺序逐个处理，查找行开头为下一个 item 名称的行，对内容切分并处理。
-        例如：('part i','Item 1') 的尾部若出现 'Item 2' 开头行，则将尾部移到 ('part i','Item 2')。
+        Process items in the order of ordered_links; locate a line starting with the next item name in the tail, then split and move that tail to the next item.
+        Example: if the tail of ('part i','Item 1') contains a line starting with 'Item 2', move the tail to ('part i','Item 2').
         """
-        # 构造有序的键序列
+        # Build the ordered key sequence
         ordered_names = [nm for (nm, _lid, _el) in ordered_links]
 
         for idx in range(len(ordered_names) - 1):
             curr_key = ordered_names[idx]
             next_key = ordered_names[idx + 1]
 
-            # 当前内容必须存在且为字符串
+            # Current content must exist and be a string
             curr_val = results.get(curr_key)
             if not isinstance(curr_val, str) or not curr_val.strip():
                 continue
 
-            # 取下一个条目的标签文本（用于匹配行首）
+            # Get the next item's label text for matching at line start
             if isinstance(next_key, (list, tuple)) and len(next_key) >= 2:
                 next_label = str(next_key[1]).strip()
             else:
                 next_label = str(next_key).strip()
 
-            # 仅在 next_label 非空时尝试匹配
+            # Only attempt matching when next_label is non-empty
             if not next_label:
                 continue
 
-            # 取最后 20 个非空行，定位可能出现的下一个条目标题
+            # Check the last non-empty lines to locate the next item's header
             lines = [ln for ln in curr_val.splitlines() if ln.strip()]
             tail = lines[-50:] if len(lines) > 50 else lines
 
-            # 构造以 next_label 开头的匹配，忽略大小写，允许后续标点或空白
+            # Build a match that starts with next_label, case-insensitive, allowing punctuation or whitespace after
             match_idx = None
             pattern = rf"^{re.escape(next_label)}(?:\b|\s|[\.|:;\-–—])"
             # for i, ln in enumerate(tail):
@@ -583,11 +583,11 @@ class AssembleText:
                         match_idx = len(lines) - len(tail) + i
                         break
 
-            # 未匹配则跳过当前条目
+            # If no match, skip the current item
             if match_idx is None:
                 continue
 
-            # 执行切分：当前条目保留前半部分，尾部移交给下一个条目
+            # Perform split: keep the head in the current item and move the tail to the next item
             before = "\n".join(lines[:match_idx-1]).strip()
             after = "\n".join(lines[match_idx-1:]).strip()
 
@@ -597,10 +597,10 @@ class AssembleText:
             else:
                 results[next_key] = after
 
-        # 反向归还item内容
-        # 反向逻辑：从每个 item 的头 50 行判断是否有当前标题，
-        # 若存在，则将标题之前的内容归还给上一个 item
-        # 反向逻辑：从最后一个 item 开始逐步向上归还头部前言内容
+        # Reverse give-back of item content
+        # Reverse logic: inspect the first 50 lines of each item for the current header
+        # If found, give back the content before the header to the previous item
+        # Reverse logic: from the last item, progressively give back front-matter to previous items
         for idx in range(len(ordered_names) - 1, 0, -1):
             prev_key = ordered_names[idx - 1]
             curr_key = ordered_names[idx]
@@ -609,7 +609,7 @@ class AssembleText:
             if not isinstance(curr_val, str) or not curr_val.strip():
                 continue
 
-            # 解析当前条目的标签文本（用于定位当前标题）
+            # Parse the current item's label text (to locate the current header)
             if isinstance(curr_key, (list, tuple)) and len(curr_key) >= 2:
                 curr_label = str(curr_key[1]).strip()
             else:
@@ -618,7 +618,7 @@ class AssembleText:
             if not curr_label:
                 continue
 
-            # 取前 50 个非空行，定位当前条目的标题
+            # Check the first 50 non-empty lines to locate the current item's header
             lines = [ln for ln in curr_val.splitlines() if ln.strip()]
             head = lines[:50] if len(lines) > 50 else lines
 
@@ -639,7 +639,7 @@ class AssembleText:
                         match_idx = i
                         break
             
-            # 若在头部找到当前标题且其前面存在内容，则将其前内容归还给上一个条目
+            # If the header is found near the top and there is content before it, give that content back to the previous item
             if match_idx is None or match_idx <= 0:
                 continue
 
@@ -647,10 +647,10 @@ class AssembleText:
             after = "\n".join(lines[match_idx:]).strip()
 
             if before:
-                # 更新当前条目内容为标题及其之后的部分
+                # Update the current item's content to start at the header
                 results[curr_key] = after
 
-                # 将 before 追加到上一个条目末尾
+                # Append 'before' to the end of the previous item
                 prev_val = results.get(prev_key)
                 if isinstance(prev_val, str) and prev_val.strip():
                     results[prev_key] = (prev_val + "\n" + before).strip()
@@ -661,8 +661,8 @@ class AssembleText:
     @staticmethod
     def splite_f_footer_page(html_content):
         """
-        将页脚为F-/d的页面单独取出，后续进行处理
-        并返回取出单独内容的后的html_content
+        Extract footer pages marked with F-/d for separate processing
+        Return html_content after extracting those separate parts
         """
         soup = BeautifulSoup(html_content, "html.parser")
         footer = soup.find("footer")
@@ -672,7 +672,7 @@ class AssembleText:
 
 
 if __name__ == "__main__":
-    # 设置日志级别以显示性能监控信息
+    # Set log level to show performance monitoring information
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
     )
@@ -745,12 +745,12 @@ if __name__ == "__main__":
             ),
         ]
 
-        # 执行性能测试
+        # Run performance test
         result = AssembleText.assemble_items(html_content, item_links)
-        print(f"处理完成，共生成 {len(result)} 个项目")
+        print(f"Processing complete, generated {len(result)} items")
 
         # result[('extracted', ('extracted', 'Executive Summary'))]
         for key, value in result.items():
-            print(f"项目: {key}, 内容长度: {len(value)} 字符")
+            print(f"Item: {key}, content length: {len(value)} chars")
             print(AssembleText.assemble_html_document(value))
 

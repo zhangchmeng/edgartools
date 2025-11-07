@@ -5,15 +5,15 @@ from pydantic import BaseModel, Field
 from abc import ABC, abstractmethod
 
 
-# 简化的Pydantic模型定义
+# Simplified Pydantic model definitions
 class PageContent(BaseModel):
-    """F-number页面内容的简化模型"""
+    """Simplified model for F-number page content"""
 
-    page_number: int = Field(..., description="页码数字")
-    page_soup: Any = Field(..., description="页面的BeautifulSoup对象")
-    text_content: str = Field("", description="页面文本内容")
+    page_number: int = Field(..., description="Page number")
+    page_soup: Any = Field(..., description="Page's BeautifulSoup object")
+    text_content: str = Field("", description="Page text content")
     page_separators: List[Any] = Field(
-        default_factory=list, description="页面分隔符元素列表"
+        default_factory=list, description="List of page separator elements"
     )
 
     class Config:
@@ -21,13 +21,13 @@ class PageContent(BaseModel):
 
 
 class PageNumberExtractionResult(BaseModel):
-    """页码提取结果的简化模型"""
+    """Simplified model for page number extraction result"""
 
     page_numbers: List[int] = Field(
-        default_factory=list, description="页码列表"
+        default_factory=list, description="List of page numbers"
     )
     page_contents: Dict[int, PageContent] = Field(
-        default_factory=dict, description="页面内容字典"
+        default_factory=dict, description="Dictionary of page contents"
     )
 
     class Config:
@@ -36,33 +36,33 @@ class PageNumberExtractionResult(BaseModel):
 
 class BasePageSplitter(ABC):
     """
-    页码分割器基础抽象类
-    定义所有页码分割器的通用接口和方法
+    Base abstract class for page number splitters.
+    Defines common interfaces and methods for all splitters.
     """
 
     @abstractmethod
-    def extract_page_numbers(self, html_content: str):
+    def extract_page_numbers(self, html_content: str) -> PageNumberExtractionResult:
         """
-        提取页码的抽象方法，子类必须实现
+        Abstract method to extract page numbers; must be implemented by subclasses.
         
         Args:
-            html_content: HTML内容字符串
+            html_content: HTML content string
             
         Returns:
-            PageNumberExtractionResult: 页码提取结果
+            PageNumberExtractionResult: Page number extraction result
         """
         pass
 
     @staticmethod
     def _extract_text_content(element):
         """
-        通用的文本内容提取方法
+        Common method to extract text content
 
         Args:
-            element: HTML元素或NavigableString
+            element: HTML element or NavigableString
 
         Returns:
-            提取的文本内容
+            Extracted text content
         """
         if hasattr(element, "get_text"):
             return element.get_text().strip()
@@ -73,24 +73,24 @@ class BasePageSplitter(ABC):
     @staticmethod
     def _search_f_number_pattern(text):
         """
-        通用的F-number模式搜索方法
+        Common F-number pattern search method
 
         Args:
-            text: 要搜索的文本
+            text: Text to search
 
         Returns:
-            找到的页码数字列表
+            List of found page numbers
         """
 
         # F- 10
         patterns = [
-            r"^F-(\d+)",  # 基本F-数字模式
-            r"^Page\s*F-(\d+)",  # Page F-数字模式
-            r"^\s*F-(\d+)\s*$",  # 严格的F-数字模式
-            r"^F-(\d+)\s*$",  # 以F-数字结尾
-            r"^\s*F-(\d+)",  # 以F-数字开头
-            r"^F-\s*(\d+)",  # 处理F- 10等中间有空格的情况
-            r"^\s*-\s*F-(\d+)\s*-\s*$",  # 处理- F-18 -样式
+            r"^F-(\d+)",  # Basic F-number pattern
+            r"^Page\s*F-(\d+)",  # 'Page F-<num>' pattern
+            r"^\s*F-(\d+)\s*$",  # Strict F-number pattern
+            r"^F-(\d+)\s*$",  # Ends with F-number
+            r"^\s*F-(\d+)",  # Starts with F-number
+            r"^F-\s*(\d+)",  # Handle whitespace in 'F- 10'
+            r"^\s*-\s*F-(\d+)\s*-\s*$",  # Handle '- F-18 -' style
         ]
 
         for pattern in patterns:
@@ -103,14 +103,14 @@ class BasePageSplitter(ABC):
     @staticmethod
     def _create_standard_result(page_numbers, page_contents):
         """
-        创建标准化的结果格式
+        Create a standardized result format
 
         Args:
-            page_numbers: 页码列表
-            page_contents: 页面内容字典
+            page_numbers: List of page numbers
+            page_contents: Dictionary of page contents
 
         Returns:
-            PageNumberExtractionResult对象
+            PageNumberExtractionResult object
         """
         page_count = 0
         for pc in page_contents.values():
@@ -124,24 +124,24 @@ class BasePageSplitter(ABC):
                 page_numbers=[], page_contents={}
             )
 
-        # 页面内容已经是PageContent对象，直接使用，并按键值排序
+        # Page contents are already PageContent objects; use directly and sort by key
         pydantic_page_contents = page_contents
         def _key_sort(k):
             try:
-                # 优先按数字排序（支持字符串数字）
+                # First sort numerically (supports numeric strings)
                 if isinstance(k, int):
                     return (0, k)
                 if isinstance(k, str) and k.isdigit():
                     return (0, int(k))
             except Exception:
                 pass
-            # 非数字键按字符串小写排序，置于数字键之后
+            # Non-numeric keys sorted by lowercase string, placed after numeric keys
             return (1, str(k).lower())
 
         ordered_keys = sorted(list(pydantic_page_contents.keys()), key=_key_sort)
         ordered_page_contents = {k: pydantic_page_contents[k] for k in ordered_keys}
 
-        # 创建结果对象
+        # Create result object
         result = PageNumberExtractionResult(
             page_numbers=sorted(list(set(page_numbers))),
             page_contents=ordered_page_contents,

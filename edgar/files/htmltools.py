@@ -282,12 +282,12 @@ def chunks2df(chunks: List[List[Block]],
                                      Item=lambda df: item_detector(df.Text)
                                      )
 
-    # 移除调试断点
+    # Remove debug breakpoint
     # import pdb;pdb.set_trace()
     # chunk_df[(chunk_df.Item.notnull())|(chunk_df.Part.notnull())]
     # If the row is 'toc' then set the item and part to empty
     chunk_df.loc[chunk_df.Item.str.contains('\n', na=False), 'Item'] = np.nan
-    # 记录前向填充前的原始 Item 检测结果，便于基于 Item 列直接查找下一个有值的索引
+    # Record original Item detection before forward fill to locate the next non-null index via the Item column
     raw_items = chunk_df.Item.copy()
     # if item_adjuster:
     # chunk_df = item_adjuster(chunk_df, **{'item_structure': item_structure, 'item_detector': item_detector})
@@ -304,7 +304,7 @@ def chunks2df(chunks: List[List[Block]],
     signature_rows = chunk_df[chunk_df.Signature]
     if len(signature_rows) > 0:
         signature_loc = signature_rows.index[-1]
-        # 通过检查原始 Item 列（前向填充前）的值，得到从 signature_loc 起的下一个有值的索引
+        # Determine the next non-null index after signature_loc by checking the original Item column (before forward fill)
         try:
             next_valid_idx = raw_items.loc[signature_loc + 1:].dropna().index[0]
         except Exception:

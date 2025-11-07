@@ -14,14 +14,18 @@ def group_items_by_structure(
     item_result: Dict[Any, str], structure
 ) -> Tuple[Dict[str, Dict[str, str]], Dict[str, str]]:
     """
-    将解析出的 item_result 按照给定的 structure 进行严格对齐，并实现通用的子项（如 item 7A、10B 等）合并到母项逻辑。
-    - 如果条目（忽略结尾标点）不在结构中、但其基础母项存在（例如 item 7A -> item 7），则合并追加到母项。
-    - 若条目在结构中，则严格路由到对应的 Part；否则落入 extracted。
-    返回值：
+    Strictly align parsed `item_result` to the provided `structure` and
+    implement a generic sub-item merge (e.g., item 7A, 10B) back to the base item.
+    - If an item (ignoring trailing punctuation) is not in the structure but its
+      base item exists (e.g., item 7A -> item 7), merge and append content to the base item.
+    - If the item exists in the structure, route strictly to the corresponding Part;
+      otherwise put it under `extracted`.
+
+    Returns:
       - result: {part: {item: content}, 'extracted': {...}}
-      - item_to_part: 结构中条目到所在 part 的映射（全部小写）
+      - item_to_part: mapping from items in the structure to their part (all lowercase)
     """
-    # 预先构建从条目名称到所属 Part 的映射，以及结构中的条目集合（全部小写）
+    # Pre-build mapping from item name to its Part, and the set of items in the structure (all lowercase)
     item_to_part: Dict[str, str] = {}
     structure_items_set = set()
     norm_structure_items_set = set()
@@ -31,27 +35,27 @@ def group_items_by_structure(
             lower_name = part_item_name.lower()
             item_to_part[lower_name] = part_name.lower()
             structure_items_set.add(lower_name)
-            # 规范化名称以消除末尾标点差异（如 'item 1.' -> 'item 1'）
+            # Normalize names to remove trailing punctuation differences (e.g., 'item 1.' -> 'item 1')
             normalized = re.sub(r"[\.:;]\s*$", "", lower_name).strip()
             norm_structure_items_set.add(normalized)
 
-    # 初始化结果结构
+    # Initialize result structure
     result: Dict[str, Dict[str, str]] = {
         part_name.lower(): {} for part_name in structure.structure
     }
     result["extracted"] = {}
 
-    # 遍历 item_result 并路由内容
+    # Iterate item_result and route content
     for key, content in item_result.items():
         if isinstance(key, tuple) and len(key) == 2:
-            # ('part i', 'Item X')：不使用传入的 part 名称，始终以结构定义进行路由
+            # ('part i', 'Item X'): ignore the provided part name; always route by structure definition
             _, item_name = key
             item_name = item_name.lower()
             normalized_item = re.sub(r"[\.:;]\s*$", "", item_name).strip()
             base_match = re.match(r"^(item\s+\d+)\s*[a-z]\b", normalized_item)
             base_item = base_match.group(1) if base_match else None
 
-            # 通用子项合并：子项不在结构中、但基础母项存在 -> 合并到母项
+            # Generic sub-item merge: sub-item not in structure but base item exists -> merge to base
             if (
                 base_item
                 and (normalized_item not in structure_items_set)
@@ -73,7 +77,7 @@ def group_items_by_structure(
                 else:
                     result["extracted"][normalized_item] = content
         else:
-            # 'Item X' 或其他字符串键
+            # 'Item X' or other string keys
             item_name = str(key).lower()
             normalized_item = re.sub(r"[\.:;]\s*$", "", item_name).strip()
             base_match = re.match(r"^(item\s+\d+)\s*[a-z]\b", normalized_item)
@@ -581,7 +585,7 @@ class ParsedHtml10K(BaseHtmlParser):
             html_content, item_links, markdown=markdown
         )
 
-        # 使用通用结构化分发函数，将条目严格对齐到 structure，并执行子项合并
+        # Use common structured dispatch to strictly align items to structure and merge sub-items
         result, item_to_part = group_items_by_structure(item_result, structure)
 
         # if financal_elements_content:
@@ -605,9 +609,10 @@ class ParsedHtml10K(BaseHtmlParser):
             len(result.get("part iv", {}).get("item 16", "")) > 10000
             or len(result.get("extracted", {}).get("signature", "")) > 10000
         ):
-            # 从以下两个模块中找出字符长度最长的模块，然后找出第一个能匹配到的字符
-            # "CONSOLIDATED FINANCIAL STATEMENTS"（不区分大小写），将从该匹配处开始的内容附加到 item 8 中
-            # 候选模块：result["extracted"]["signature"], result["part iv"]["item 16"]
+            # From the two modules below, pick the one with the longest text,
+            # then find the first match of "CONSOLIDATED FINANCIAL STATEMENTS" (case-insensitive),
+            # and append content from that match to item 8.
+            # Candidates: result["extracted"]["signature"], result["part iv"]["item 16"]
             signature_text = ""
             item16_text = ""
             try:
@@ -619,7 +624,7 @@ class ParsedHtml10K(BaseHtmlParser):
             except Exception:
                 item16_text = ""
 
-            # 选择较长文本并记录来源模块键
+            # Select longer text and record source module key
             if len(item16_text) >= len(signature_text):
                 candidate_text = item16_text
                 candidate_key = ("part iv", "item 16")
@@ -638,7 +643,7 @@ class ParsedHtml10K(BaseHtmlParser):
                 ]
 
                 match = None
-                # 使用多个正则，取最早出现（最靠前）的匹配
+                # Use multiple regex patterns and take the earliest (frontmost) match
                 match = None
                 for pattern in financial_statement_patterns:
                     m = re.search(pattern, candidate_text, re.IGNORECASE)
@@ -646,21 +651,22 @@ class ParsedHtml10K(BaseHtmlParser):
                         match = m
 
                 if match:
-                    # 被拆分的数据：上半部分（匹配之前）填充回原本的模块，下半部分（从匹配开始）附加到 item 8
+                    # Split data: upper part (before the match) goes back to the original module,
+                    # lower part (from the match) is appended to item 8
                     before = candidate_text[: match.start()]
                     tail = candidate_text[match.start() :]
 
-                    # 为避免附加过多内容，尝试在下一个可能的章节标题处截断尾部
+                    # To avoid appending too much, consider truncating at the next possible section title
                     # stop = re.search(r"\n\s*(SIGNATURES|ITEM\s+\d+|EXHIBITS?)\b", tail, re.IGNORECASE)
                     # if stop:
                     #     tail = tail[:stop.start()]
 
-                    # 上半部分填充回原本的模块（覆盖原模块内容为匹配前文本）
+                    # Fill the upper part back to the original module (overwrite with pre-match text)
                     result.setdefault(candidate_key[0], {})[candidate_key[1]] = (
                         before or ""
                     ).strip()
 
-                    # 下半部分附加到 item 8
+                    # Append the lower part to item 8
                     result.setdefault(target_part, {}).setdefault(target_item, "")
                     result[target_part][target_item] += "\n" + tail.strip()
         return result
@@ -669,7 +675,7 @@ class ParsedHtml10K(BaseHtmlParser):
 class ParsedHtml10Q(BaseHtmlParser):
     """Parser for 10-Q HTML documents that handles same item numbers in different parts."""
 
-    # extract_element_id 方法已在基类中定义
+    # Note: extract_element_id method is defined in the base class
 
     @monitor_performance
     def extract_html_link_info(self, html_content: str) -> List[Any]:
@@ -844,7 +850,7 @@ class ParsedHtml10Q(BaseHtmlParser):
                             cell = replace_space(cell)
                             if match_function(cell, match_text):
                                 link = one_link["link"]
-                                # 如果没有part信息，则根据匹配的内容推断part
+                                # If no explicit part is present, infer the part from matched content
                                 link_part = one_link.get("part")
                                 if link_part is None:
                                     part_i_indicators = [
@@ -897,20 +903,23 @@ class ParsedHtml10Q(BaseHtmlParser):
 
     def check_10q_index_table(self, index_table: List[List[Dict[str, Any]]]) -> bool:
         """
-        检查传入的index_table，如果符合第一种含有part有效，否则返回False
+        Validate the `index_table` format for 10-Q: return True only when it
+        matches the first style that includes explicit `part` information;
+        otherwise return False.
 
         Args:
-            index_table: 从extract_html_link_info返回的表格数据结构
-                        List[List[Dict[str, Any]]]格式
+            index_table: Table structure returned from `extract_html_link_info`,
+                in the format `List[List[Dict[str, Any]]]`.
 
         Returns:
-            bool: 如果index_table中包含part信息则返回True，否则返回False
+            bool: True if `index_table` contains valid `part` information,
+            otherwise False.
 
         Examples:
-            有效格式 (ava_ml): 包含'part'字段的字典
+            Valid format (ava_ml): dictionaries including a 'part' field
             [{'part': 'part i', 'text': ['Item 1.', 'Financial Statements', '1'], 'link': '...'}, ...]
 
-            无效格式 (inva_ml): 不包含'part'字段的字典
+            Invalid format (inva_ml): dictionaries without a 'part' field
             [{'text': ['Item 1.', 'Financial Statements (unaudited)', ''], 'link': '...'}, ...]
         """
         # ava_ml = [[{'part': 'part i', 'text': ['Item 1.', 'Financial Statements', '1'], 'link': 'i056866be11a54295b8c21e0877b67331_13'}, {'part': 'part i', 'text': ['Item 2.', 'Management's Discussion and Analysis of Financial Condition and Results of Operations', '12'], 'link': 'i056866be11a54295b8c21e0877b67331_67'}, {'part': 'part i', 'text': ['Item 3.', 'Quantitative and Qualitative Disclosures About Market Risk', '18'], 'link': 'i056866be11a54295b8c21e0877b67331_145'}, {'part': 'part i', 'text': ['Item 4.', 'Controls and Procedures', '18'], 'link': 'i056866be11a54295b8c21e0877b67331_148'}, {'part': 'part ii', 'text': ['Item 1.', 'Legal Proceedings', '19'], 'link': 'i056866be11a54295b8c21e0877b67331_154'}, {'part': 'part ii', 'text': ['Item 1A.', 'Risk Factors', '20'], 'link': 'i056866be11a54295b8c21e0877b67331_157'}, {'part': 'part ii', 'text': ['Item 2.', 'Unregistered Sales of Equity Securities and Use of Proceeds', '22'], 'link': 'i056866be11a54295b8c21e0877b67331_160'}, {'part': 'part ii', 'text': ['Item 3.', 'Defaults Upon Senior Securities', '22'], 'link': 'i056866be11a54295b8c21e0877b67331_163'}, {'part': 'part ii', 'text': ['Item 4.', 'Mine Safety Disclosures', '22'], 'link': 'i056866be11a54295b8c21e0877b67331_166'}, {'part': 'part ii', 'text': ['Item 5.', 'Other Information', '22'], 'link': 'i056866be11a54295b8c21e0877b67331_169'}, {'part': 'part ii', 'text': ['Item 6.', 'Exhibits', '22'], 'link': 'i056866be11a54295b8c21e0877b67331_175'}]]
@@ -919,23 +928,23 @@ class ParsedHtml10Q(BaseHtmlParser):
         if not index_table or not isinstance(index_table, list):
             return False
 
-        # 遍历所有表格
+        # Iterate through all tables
         for table in index_table:
             if not isinstance(table, list):
                 continue
 
-            # 遍历表格中的每一行
+            # Iterate through each row in the table
             for row in table:
                 if isinstance(row, dict) and "part" in row:
-                    # 如果找到包含'part'字段的行，说明是有效格式
+                    # Found a row with 'part' field, consider it a valid format
                     part_value = row.get("part")
                     if part_value and isinstance(part_value, str):
-                        # 检查part值是否为有效的part格式（如'part i', 'part ii'等）
+                        # Check if the part value is valid (e.g., 'part i', 'part ii')
                         part_lower = part_value.lower().strip()
                         if part_lower.startswith("part ") and len(part_lower) > 5:
                             return True
 
-        # 如果没有找到任何包含有效part信息的行，返回False
+        # If no rows contain valid part information, return False
         return False
 
     def extract_html(
@@ -972,7 +981,7 @@ class ParsedHtml10Q(BaseHtmlParser):
             html_content, item_links, markdown=markdown
         )
         # item_result[('part i', 'Item 3')]
-        # 规范化结构：将 {('part i','Item 1'): value, ...} 转为
+        # Normalize structure: convert {('part i','Item 1'): value, ...} to
         # {"part i": {"Item 1": value, ...}, "part ii": {...}, "extracted": {...}}
         result: Dict[str, Dict[str, Any]] = {
             "part i": {},
@@ -982,19 +991,19 @@ class ParsedHtml10Q(BaseHtmlParser):
 
         if isinstance(item_result, dict):
             for one_item, value in item_result.items():
-                # 期望 one_item 为长度为2的 tuple: (part, item_name)
+                # Expect one_item as a 2-tuple: (part, item_name)
                 if not isinstance(one_item, (tuple, list)) or len(one_item) != 2:
                     continue
                 part_raw, item_raw = one_item
                 part_key = str(part_raw).lower().strip()
                 item_key = str(item_raw).strip().lower()
 
-                # 如果part在预设的分区中，放入对应分区；否则归入extracted
+                # If part is in predefined partitions, put into that partition; otherwise route to extracted
                 if part_key in result:
                     result[part_key][item_key] = value
                 else:
                     result["extracted"][item_key] = value
-        # 若返回的结构异常，直接返回空的三分区结构
+        # If return structure is abnormal, return empty three-part structure directly
         return result
 
 
@@ -1468,10 +1477,10 @@ class ParsedHtml20F(ParsedHtml10K):
             html_content, item_links, markdown=markdown
         )
 
-        # 使用通用结构化分发函数，将条目严格对齐到 structure，并执行子项合并
+        # Use common structured dispatch to strictly align items to structure and merge sub-items
         result, item_to_part = group_items_by_structure(item_result, structure)
 
-        # 选择将财务元素附加到 part iii 的条目，要求与 structure 保持一致
+        # Choose which part iii item to append financial elements to, keeping consistency with structure
         part = result.setdefault("part iii", {})
         allowed_items_part_iii = {
             name for name, p in item_to_part.items() if p == "part iii"
@@ -1497,7 +1506,7 @@ class ParsedHtml20F(ParsedHtml10K):
                 )
             else:
                 target_key = "item 18" if "item 18" in allowed_candidates else "item 17"
-        # # 附加内容：若没有允许的目标项则写入 extracted，避免破坏与 structure 的一致性
+        # # Append content: if no allowed target item then write to extracted to keep consistency with structure
         # if financal_elements_content:
         #     if target_key:
         #         part.setdefault(target_key, "")
@@ -1511,9 +1520,10 @@ class ParsedHtml20F(ParsedHtml10K):
             len(result.get("part iii", {}).get("item 19", "")) > 10000
             or len(result.get("extracted", {}).get("signature", "")) > 10000
         ):
-            # 从以下两个模块中找出字符长度最长的模块，然后找出第一个能匹配到的字符
-            # "CONSOLIDATED FINANCIAL STATEMENTS"（不区分大小写），将从该匹配处开始的内容附加到 item 8 中
-            # 候选模块：result["extracted"]["signature"], result["part iv"]["item 16"]
+            # From the two modules below, pick the one with the longest text,
+            # then find the first match of "CONSOLIDATED FINANCIAL STATEMENTS" (case-insensitive),
+            # and append content from that match to the target item in part iii.
+            # Candidates: result["extracted"]["signature"], result["part iv"]["item 16"]
             signature_text = ""
             item19_text = ""
             try:
@@ -1525,7 +1535,7 @@ class ParsedHtml20F(ParsedHtml10K):
             except Exception:
                 item19_text = ""
 
-            # 选择较长文本并记录来源模块键
+            # Select longer text and record source module key
             if len(item19_text) >= len(signature_text):
                 candidate_text = item19_text
                 candidate_key = ("part iii", "item 19")
@@ -1536,28 +1546,29 @@ class ParsedHtml20F(ParsedHtml10K):
             if candidate_text and len(candidate_text) > len(
                 result["part iii"][target_key]
             ):
-                # 添加更多的匹配规则 Combined Financial Statements
-                # 匹配各种形式的财务报表标题
+                # Add more matching rules for Combined Financial Statements
+                # Match various forms of financial statement titles
                 financial_statement_patterns = [r"FINANCIAL\s+STATEMENTS", r"F-1"]
 
                 match = None
-                # 使用多个正则，取最早出现（最靠前）的匹配
+                # Use multiple regex patterns and take the earliest (frontmost) match
                 match = None
                 for pattern in financial_statement_patterns:
                     m = re.search(pattern, candidate_text, re.IGNORECASE)
                     if m and (match is None or m.start() < match.start()):
                         match = m
                 if match:
-                    # 被拆分的数据：上半部分（匹配之前）填充回原本的模块，下半部分（从匹配开始）附加到 item 8
+                    # Split data: upper part (before the match) goes back to the original module,
+                    # lower part (from the match) is appended to the target item in part iii
                     before = candidate_text[: match.start()]
                     tail = candidate_text[match.start() :]
 
-                    # 上半部分填充回原本的模块（覆盖原模块内容为匹配前文本）
+                    # Fill the upper part back to the original module (overwrite with pre-match text)
                     result.setdefault(candidate_key[0], {})[candidate_key[1]] = (
                         before or ""
                     ).strip()
 
-                    # 下半部分附加到 item 8
+                    # Append the lower part to the target item
                     result["part iii"][target_key] += "\n" + tail.strip()
         return result
 

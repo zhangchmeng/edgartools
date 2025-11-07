@@ -922,7 +922,7 @@ def merge_empty_div_elements(start_element: Tag):
         # Check if div content is empty or only contains &nbsp; or whitespace
         content = div.get_text().strip()
         if not content or content == "\xa0" or content.isspace():
-            # 使用NavigableString替换空的inline-block div
+            # Replace empty inline-block divs with NavigableString
             div.replace_with(NavigableString(" "))
 
     # Recursively merge text nodes in all elements
