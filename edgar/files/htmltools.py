@@ -283,7 +283,6 @@ def chunks2df(chunks: List[List[Block]],
                                      )
 
     # Remove debug breakpoint
-    # import pdb;pdb.set_trace()
     # chunk_df[(chunk_df.Item.notnull())|(chunk_df.Part.notnull())]
     # If the row is 'toc' then set the item and part to empty
     chunk_df.loc[chunk_df.Item.str.contains('\n', na=False), 'Item'] = np.nan
@@ -372,14 +371,46 @@ class ChunkedDocument:
     def list_items(self):
         return [item for item in self._chunked_data.Item.drop_duplicates().tolist() if item]
 
-    def part_item_res(self, markdown: bool = True) -> Dict[str, Dict[str, str]]:
+    def _chunk_item_split(self, part: str, item: str):
+        chunk_df = self._chunked_data
+
+        # Handle cases where the item has the decimal point e.g. 5.02
+        part = part.replace('.', r'\.')
+        item = item.replace('.', r'\.')
+        pattern_part = re.compile(rf'^{part}$', flags=re.IGNORECASE)
+        pattern_item = re.compile(rf'^{item}$', flags=re.IGNORECASE)
+
+        item_mask = chunk_df["Item"].str.match(pattern_item)
+        part_mask = chunk_df["Part"].str.match(pattern_part)
+        toc_mask = ~(~chunk_df.Toc.notnull() & chunk_df.Toc)
+        empty_mask = ~chunk_df.Empty
+        mask = part_mask & item_mask & toc_mask & empty_mask
+
+        # Return all matching chunks without filtering for continuity
+        res: list[list] = []
+        _res = []
+        last_index = None
+        for cur_index in mask[mask].index:
+            # yield self.chunks[i]
+            if not last_index or cur_index == (last_index+1):
+                _res.append(self.chunks[cur_index])
+            else:
+                res.append(_res)
+                _res = []
+            last_index = cur_index
+        res.append(_res)
+        return res
+
+    def part_item_res(self, markdown: bool = True, filter_part: bool =False, split:bool=False) -> Dict[str, Dict[str, str]]:
         """Get the actual part and item combinations that exist in the dataframe"""
         # Get all non-empty Part and Item combinations
         df = self._chunked_data
-        
+
         # Filter rows with both Part and Item
-        filtered_df = df[(df['Part'].notna()) & (df['Item'].notna()) & (df['Part'] != "") & (df['Item']!="")].copy()
-       
+        if filter_part: # 10-Q: The same item will appear in different parts
+            filtered_df = df[(df['Part'].notna()) & (df['Item'].notna()) & (df['Part'] != "") & (df['Item']!="")].copy()
+        else:
+            filtered_df = df[(df['Item'].notna()) & (df['Item']!="")].copy()
 
         # Create result dictionary
         result = {}
@@ -389,18 +420,33 @@ class ChunkedDocument:
             if part_items:
                 part_key = part.lower()  # Convert part to lowercase
                 result[part_key] = {}
-                for item in sorted(part_items):
-                    item_key = item.lower()  # Convert item to lowercase
-                    # Get text content for this part and item
-                    chunks = list(self._chunks_mul_for(part, item))
-                    if chunks:
-                        if markdown:
-                            content = self.clean_part_line("".join([text for text in self.assemble_block_markdown(chunks)]))
+                if split:
+                    for item in sorted(part_items):
+                        item_key = item.lower()  # Convert item to lowercase
+                        # Get text content for this part and item
+                        # chunks = list(self._chunks_mul_for(part, item))
+                        chunks_list = self._chunk_item_split(part, item)
+                        if chunks_list:
+                            if markdown:
+                                content_list = [self.clean_part_line("".join([text for text in self.assemble_block_markdown(chunks)])) for chunks in chunks_list]
+                            else:
+                                content_list = [self.clean_part_line("".join([text for text in self.assemble_block_text(chunks)])) for chunks in chunks_list]
+                            result[part_key][item_key] = content_list
                         else:
-                            content = self.clean_part_line("".join([text for text in self.assemble_block_text(chunks)]))
-                        result[part_key][item_key] = content
-                    else:
-                        result[part_key][item_key] = ""
+                            result[part_key][item_key] = [""]
+                else:
+                    for item in sorted(part_items):
+                        item_key = item.lower()  # Convert item to lowercase
+                        # Get text content for this part and item
+                        chunks = list(self._chunks_mul_for(part, item))
+                        if chunks:
+                            if markdown:
+                                content = self.clean_part_line("".join([text for text in self.assemble_block_markdown(chunks)]))
+                            else:
+                                content = self.clean_part_line("".join([text for text in self.assemble_block_text(chunks)]))
+                            result[part_key][item_key] = content
+                        else:
+                            result[part_key][item_key] = ""
         # Add extracted section containing introduction and signature
         result["extracted"] = {}
         # Get signature content
@@ -639,3 +685,4 @@ class ChunkedDocumentSplitFinancial(ChunkedDocument):
         # else:
         #     return "".join([text for text in self.assemble_block_text(self.financial_elements)])
         return "".join([text for text in self.assemble_block_text(self.financial_elements)])
+

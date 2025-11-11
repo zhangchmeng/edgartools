@@ -573,13 +573,15 @@ class ParsedHtml10K(BaseHtmlParser):
         raw_item_links = self.extract_item_and_split(index_table)
         item_links = self.classify_items_to_parts(raw_item_links, structure)
 
-        if not item_links or (len(item_links) < 10 and form_type == "10-K"):
+        if (not item_links  or len(item_links) < 10) and form_type == "10-K":
             # new_item_links = extract_items_with_ai(structure.structure, index_table)
             new_item_links = extract_catalog_structure(
                 html_content, structure.structure, form_type
             )
             if new_item_links:
                 item_links = new_item_links
+        elif form_type == "10-K/A" and not item_links:
+            raise Exception("10-K/A no enough link, use str re")
 
         item_result = AssembleText.assemble_items(
             html_content, item_links, markdown=markdown
@@ -964,7 +966,7 @@ class ParsedHtml10Q(BaseHtmlParser):
             elif not isinstance(item_links, list):
                 item_links = []
 
-            if not item_links or (len(item_links) < 5 and form_type == "10-Q"):
+            if (not item_links or len(item_links) < 5) and form_type == "10-Q":
                 # new_item_links = extract_items_with_ai(structure.structure, index_table)
                 new_item_links = extract_catalog_structure(
                     html_content, structure.structure, form_type
@@ -972,9 +974,12 @@ class ParsedHtml10Q(BaseHtmlParser):
                 if new_item_links:
                     item_links = new_item_links
         else:
-            item_links = extract_catalog_structure(
-                html_content, structure.structure, form_type
-            )
+            if form_type == "10-Q":
+                item_links = extract_catalog_structure(
+                    html_content, structure.structure, form_type
+                )
+            else:
+                raise Exception("10-Q/A no enough link, use str re")
             # item_links = extract_items_with_ai(structure.structure, index_table)
 
         item_result = AssembleText.assemble_items(
@@ -1465,13 +1470,15 @@ class ParsedHtml20F(ParsedHtml10K):
         raw_item_links = self.extract_item_and_split(index_table)
         item_links = self.classify_items_to_parts(raw_item_links, structure)
 
-        if not item_links or (len(item_links) < 15 and form_type == "20-F"):
+        if (not item_links or len(item_links) < 15) and form_type == "20-F":
             # new_item_links = extract_items_with_ai(structure.structure, index_table)
             new_item_links = extract_catalog_structure(
                 html_content, structure.structure, form_type
             )
             if new_item_links:
                 item_links = new_item_links
+        elif not item_links:
+            raise Exception("20-F/A no enough link, use str re")
 
         item_result = AssembleText.assemble_items(
             html_content, item_links, markdown=markdown
