@@ -17,6 +17,7 @@ from edgar.formatting import datefmt
 from edgar.files.html import Document
 from edgar.files.html_documents import HtmlDocument
 from edgar.files.htmltools import ChunkedDocument, ChunkedDocumentSplitFinancial, chunks2df, detect_decimal_items, adjust_for_empty_items
+from edgar.files.text_tools import ChunkedDocumentText
 from edgar.financials import Financials
 from edgar.richtools import repr_rich, rich_to_text
 
@@ -74,6 +75,8 @@ class CompanyReport:
     @property
     @lru_cache(maxsize=1)
     def chunked_document(self):
+        if self._filing.document.extension==".txt":
+            return ChunkedDocumentText(self._filing.text())
         return ChunkedDocument(self._filing.html())
 
 
@@ -278,6 +281,8 @@ class TenK(CompanyReport):
     @property
     @lru_cache(maxsize=1)
     def chunked_document(self):
+        if self._filing.document.extension==".txt":
+            return ChunkedDocumentText(self._filing.text())
         return ChunkedDocument(self._filing.html(), prefix_src=self._filing.base_dir)
     
     @lru_cache(maxsize=1)
@@ -298,65 +303,24 @@ class TenK(CompanyReport):
         part_item_res = self.chunked_document.part_item_res(markdown=markdown)
   
         # 合并被错误拆分到不同 Part 的相同 Item，统一归并到其规范 Part，并移除其它 Part 的重复项
-        def _canonical_part_for_item(item_key: str):
-            m = re.match(r'^\s*item\s+(\d+)', item_key, re.IGNORECASE)
-            if not m:
-                return None
-            n = int(m.group(1))
-            if 1 <= n <= 4:
-                return 'part i'
-            if 5 <= n <= 9:
-                return 'part ii'
-            if 10 <= n <= 14:
-                return 'part iii'
-            if 15 <= n <= 16:
-                return 'part iv'
-            return None
+        standard_pa = self.structure.structure
+        right_map = {} # item: part
+        for st_part in standard_pa:
+            for st_item in standard_pa[st_part]:
+                right_map[st_item] = st_part
+
+        new_part_item_res = {}
+        for pa_part in part_item_res:
+            for pa_item in part_item_res[pa_part]:
+                right_part = (right_map.get(pa_item.upper(), pa_part)).lower()
+                
+                if new_part_item_res.get(right_part):
+                    new_part_item_res[right_part][pa_item] = new_part_item_res[right_part].get(pa_item, "") + part_item_res.get(pa_part, {}).get(pa_item, "")
+                else:
+                    new_part_item_res[right_part] = {}
+                    new_part_item_res[right_part][pa_item] = new_part_item_res[right_part].get(pa_item, "") + part_item_res.get(pa_part, {}).get(pa_item, "")
         
-        part_order = ['part i', 'part ii', 'part iii', 'part iv']
-        items_content_map = {}
-        for p, items in part_item_res.items():
-            if p == 'extracted' or not isinstance(items, dict):
-                continue
-            for item_key, content in items.items():
-                text = str(content or '').strip()
-                if text:
-                    items_content_map.setdefault(item_key, []).append((p, text))
-        
-        def _part_index(p: str) -> int:
-            return part_order.index(p) if p in part_order else len(part_order)
-        
-        for item_key, entries in items_content_map.items():
-            if len(entries) <= 1:
-                continue
-            # 选择规范 Part；无规范则使用首个出现的 Part
-            canonical = _canonical_part_for_item(item_key) or entries[0][0]
-            part_item_res.setdefault(canonical, {}).setdefault(item_key, '')
-            initial = str(part_item_res[canonical][item_key] or '').strip()
-            
-            # 按预设 Part 顺序合并，避免重复追加相同的初始内容
-            entries_sorted = sorted(entries, key=lambda t: _part_index(t[0]))
-            aggregated = []
-            if initial:
-                aggregated.append(initial)
-            for p, c in entries_sorted:
-                if c and (p != canonical or c != initial):
-                    aggregated.append(c)
-            part_item_res[canonical][item_key] = ('\n'.join(aggregated)).strip()
-            
-            # 从其它 Part 中移除该 Item，避免重复
-            for p, _ in entries:
-                if p != canonical and isinstance(part_item_res.get(p), dict):
-                    try:
-                        if item_key in part_item_res[p]:
-                            del part_item_res[p][item_key]
-                    except Exception:
-                        part_item_res[p][item_key] = ''
-        
-        # if financial_content:
-        #     if part_item_res.get("part ii") and part_item_res['part ii'].get("item 8"):
-        #         part_item_res['part ii']['item 8'] += financial_content
-        
+        part_item_res = new_part_item_res
         # 从以下两个模块中找出字符长度最长的模块，然后找出第一个能匹配到的字符
         # "CONSOLIDATED FINANCIAL STATEMENTS"（不区分大小写），将从该匹配处开始的内容附加到 item 8 中
         # 候选模块：result["extracted"]["signature"], result["part iv"]["item 16"]
@@ -620,7 +584,101 @@ class TenQ(CompanyReport):
         return ParsedHtml10Q().extract_html(self._filing.html(), self.structure, markdown=markdown, form_type=self._filing.form)
 
     def get_re_parse_res(self, markdown:bool=True):
-        return self.chunked_document.part_item_res(markdown=markdown)
+        part_item_res = self.chunked_document.part_item_res(markdown=markdown, filter_part=False, split=True)
+        # 统一相似度检查：统计相同词数量 + 集合相似度 + Item号匹配
+        def _first_line(paragraph: str) -> str:
+            if not paragraph:
+                return ""
+            lines = paragraph.strip().splitlines()
+            return lines[0].strip() if lines else ""
+
+        def _tokenize(text: str) -> List[str]:
+            return [w for w in re.findall(r"[A-Za-z0-9]+", text.lower()) if w]
+
+        def _is_item_like(item_meta: dict, paragraph: str) -> bool:
+            line = _first_line(paragraph)[:100]
+            if not line:
+                return False
+            stopwords = {
+                "the","and","of","to","in","for","on","with","a","an","by","at","from",
+                "or","be","as","is","are","it","this","that","which","item","part","section"
+            }
+            line_tokens = [t for t in _tokenize(line) if t not in stopwords]
+
+            # 再做文本相似度判断：title/desc 与第一行的重叠度
+            for item_name in (item_meta.get("title", ""), item_meta.get("desc", "")):
+                if not item_name:
+                    continue
+                item_tokens = [t for t in _tokenize(item_name) if t not in stopwords]
+                if not item_tokens or not line_tokens:
+                    continue
+                set_item = set(item_tokens)
+                set_line = set(line_tokens)
+                shared = set_item & set_line
+                shared_count = len(shared)
+                overlap = shared_count / max(1, min(len(set_item), len(set_line)))
+                jaccard = shared_count / max(1, len(set_item | set_line))
+                if shared_count >= 2 and (overlap >= 0.6 or jaccard >= 0.4):
+                    return True
+            return False
+
+        # part_item_res = self.chunked_document.part_item_res(markdown=markdown)
+        standard_pa = self.structure.structure
+        right_map = [] # item: part
+        item_part_map_default = {}
+        for st_part in standard_pa:
+            for st_item in standard_pa[st_part]:
+                right_map.append({"part": st_part, "item":st_item, "title": standard_pa[st_part][st_item]["Title"], "desc": standard_pa[st_part][st_item]["Description"]})
+                item_part_map_default[st_item] = st_part
+    
+        new_part_item_res = {}
+        for pa_part in part_item_res:
+            for pa_item in part_item_res[pa_part]:
+                content_list = part_item_res.get(pa_part, {}).get(pa_item, "")
+
+                cur_part = pa_part.lower() or item_part_map_default.get(pa_item)
+                cur_item = pa_item
+                
+                if isinstance(content_list, list):
+                    for content in content_list:
+                        # 统一换行符并去除首尾空白
+                        content = content.strip()
+                        if not content:
+                            continue
+
+                        # 若当前行疑似新 Item，尝试匹配标准结构
+                        if content.upper().startswith("ITEM"):
+                            matched = False
+                            for meta in right_map:
+                                if _is_item_like(meta, content):
+                                    cur_part = meta["part"].lower()
+                                    cur_item = meta["item"].lower()
+                                    matched = True
+                                    break
+                            
+                            if not matched:
+                                pass
+                        
+                        new_part_item_res.setdefault(cur_part, {})
+                        new_part_item_res[cur_part].setdefault(cur_item, "")
+                        sep = "\n" if new_part_item_res[cur_part][cur_item] else ""
+                        new_part_item_res[cur_part][cur_item] += sep + content
+        
+                else:
+                    for item_meta in right_map:
+                        if _is_item_like(item_meta, content_list):
+                            cur_part = item_meta["part"].lower()
+                            cur_item = item_meta["item"].lower()
+                            break
+                    
+                    if new_part_item_res.get(cur_part):
+                        new_part_item_res[cur_part][cur_item] = new_part_item_res[cur_part].get(cur_item, "") + content_list
+                    else:
+                        new_part_item_res[cur_part] = {}
+                        new_part_item_res[cur_part][pa_item] = new_part_item_res[cur_part].get(cur_item, "") + content_list
+        
+        part_item_res = new_part_item_res
+        return part_item_res
 
     def get_id_parse_res(self, markdown:bool=True):
         return self.id_parse_document(markdown=markdown)
@@ -628,6 +686,8 @@ class TenQ(CompanyReport):
     @property
     @lru_cache(maxsize=1)
     def chunked_document(self):
+        if self._filing.document.extension==".txt":
+            return ChunkedDocumentText(self._filing.text())
         return ChunkedDocument(self._filing.html(), prefix_src=self._filing.base_dir)
     
     def get_structure(self):
@@ -846,6 +906,25 @@ class TwentyF(CompanyReport):
         #     if part_item_res.get("part iii") and part_item_res['part iii'].get("item 18"):
         #         part_item_res['part iii']['item 18'] += financial_content
         part_item_res = self.chunked_document.part_item_res(markdown=markdown)
+
+        standard_pa = self.structure.structure
+        right_map = {} # item: part
+        for st_part in standard_pa:
+            for st_item in standard_pa[st_part]:
+                right_map[st_item] = st_part
+
+        new_part_item_res = {}
+        for pa_part in part_item_res:
+            for pa_item in part_item_res[pa_part]:
+                right_part = (right_map.get(pa_item.upper(), pa_part)).lower()
+                
+                if new_part_item_res.get(right_part):
+                    new_part_item_res[right_part][pa_item] = new_part_item_res[right_part].get(pa_item, "") + part_item_res.get(pa_part, {}).get(pa_item, "")
+                else:
+                    new_part_item_res[right_part] = {}
+                    new_part_item_res[right_part][pa_item] = new_part_item_res[right_part].get(pa_item, "") + part_item_res.get(pa_part, {}).get(pa_item, "")
+
+        part_item_res = new_part_item_res
         # 从以下两个模块中找出字符长度最长的模块，然后找出第一个能匹配到的字符
         # "CONSOLIDATED FINANCIAL STATEMENTS"（不区分大小写），将从该匹配处开始的内容附加到 item 8 中
         # 候选模块：result["extracted"]["signature"], result["part iv"]["item 16"]
