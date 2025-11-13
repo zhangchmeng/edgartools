@@ -306,7 +306,7 @@ class AssembleText:
 
                 # Use a more efficient element traversal and avoid duplicates
                 processed_elements = set()  # Track processed element IDs
-                elements_to_process = [start_element]  # Temporarily store elements to process
+                elements_to_process = []  # Temporarily store elements to process
 
                 # Phase 1: collect all potential content elements (excluding end_link itself)
                 # The next link's parent should also not be added directly; inspect child elements individually
@@ -315,7 +315,11 @@ class AssembleText:
                 while current and current != end_element:
                     # Include only meaningful content elements
                     if current in jump_elements:
-                        pass
+                        next_elem = current.next_element
+                        if not next_elem or next_elem in link_element_list:
+                            break
+                        current = next_elem
+                        continue
                     elif AssembleText.is_content_element(current):
                         # Get the element's text content
                         elem_content = (
@@ -323,6 +327,7 @@ class AssembleText:
                             if hasattr(current, "get_text")
                             else str(current)
                         )
+                            
                         # Only consider adding when content is not empty
                         if (
                             elem_content
@@ -330,9 +335,8 @@ class AssembleText:
                         ):
                             elements_to_process.append(current)
                             processed_elements.add(id(current))
-
-                    # Move to the next element
-                    next_elem = current.next_element
+                        
+                    next_elem = current.next_sibling
                     if not next_elem or next_elem in link_element_list:
                         break
                     current = next_elem
@@ -601,11 +605,13 @@ class AssembleText:
         # Reverse logic: inspect the first 50 lines of each item for the current header
         # If found, give back the content before the header to the previous item
         # Reverse logic: from the last item, progressively give back front-matter to previous items
+
         for idx in range(len(ordered_names) - 1, 0, -1):
             prev_key = ordered_names[idx - 1]
             curr_key = ordered_names[idx]
-
+            
             curr_val = results.get(curr_key)
+
             if not isinstance(curr_val, str) or not curr_val.strip():
                 continue
 

@@ -738,6 +738,9 @@ def extract_and_format_content(element) -> List[Block]:
                 text_type="list",
             )
         ]
+    elif element.name in ["br", "hr"]:
+        return [TextBlock("\n", inline=False, element="br", text_type="string")]
+
     elif element.name in [
         "img",
     ]:
@@ -761,6 +764,7 @@ def extract_and_format_content(element) -> List[Block]:
             )
         ]
     else:
+
         # First, merge consecutive text nodes within this element
         merge_consecutive_text_nodes(element)
 
