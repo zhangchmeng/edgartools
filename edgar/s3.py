@@ -8,6 +8,48 @@ from typing import List, Dict, Optional, Union
 logger = logging.getLogger(__name__)
 
 
+def validate_file_right(content: str|bytes) -> bool:
+    """
+    Validate if the content is a valid SEC file and not an error page like "Access Denied".
+    
+    Args:
+        content: The content to validate, can be str or bytes.
+        
+    Returns:
+        bool: True if content is valid, False otherwise.
+    """
+    if isinstance(content, bytes):
+        try:
+            content = content.decode("utf-8")
+        except UnicodeDecodeError:
+            # Decode failure means invalid content
+            return False
+    
+    # Trim leading/trailing whitespace for easier checks
+    content = content.strip()
+    
+    # Empty content is invalid
+    if not content:
+        return False
+    
+    # Check for common Access Denied HTML pages
+    if len(content) < 1000:
+        if (
+            content.startswith("<HTML>") or content.startswith("<!DOCTYPE")
+        ) and "Access Denied" in content:
+            return False
+        
+        # Check for typical error keywords
+        error_indicators = [
+            "Access Denied",
+            "You don't have permission to access",
+        ]
+        for indicator in error_indicators:
+            if indicator in content:
+                return False
+    
+    return True
+
 class S3FileHandler:
     """
     S3 file handler for Edgar file caching
@@ -111,6 +153,10 @@ class S3FileHandler:
         if not file_path and content is None:
             logger.error("Either file_path or content must be provided")
             return False
+        
+        if file_path and not content:
+            with open(file_path, 'rb') as read_file:
+                content = read_file.read()
             
         if not s3_key:
             logger.error("s3_key must be provided")
@@ -118,6 +164,9 @@ class S3FileHandler:
 
         # If content is provided, use upload_content method
         if content is not None:
+            if not validate_file_right(content):
+                logger.error("content are 'Access Denied' html")
+                return False
             return self.upload_content(content, s3_key, encoding)
         
         # Otherwise, upload from file path
@@ -127,19 +176,19 @@ class S3FileHandler:
             )
             return False
 
-        try:
-            if file_path:
-                self.s3_client.upload_file(file_path, self.bucket_name, s3_key)
-                logger.info(
-                    f"File {file_path} successfully uploaded to {self.bucket_name}/{s3_key}"
-                )
-            return True
-        except ClientError as e:
-            logger.error(f"Failed to upload file: {e}")
-            return False
-        except Exception as e:
-            logger.error(f"Unknown error occurred while uploading file: {e}")
-            return False
+        # try:
+        #     if file_path:
+        #         self.s3_client.upload_file(file_path, self.bucket_name, s3_key)
+        #         logger.info(
+        #             f"File {file_path} successfully uploaded to {self.bucket_name}/{s3_key}"
+        #         )
+        #     return True
+        # except ClientError as e:
+        #     logger.error(f"Failed to upload file: {e}")
+        #     return False
+        # except Exception as e:
+        #     logger.error(f"Unknown error occurred while uploading file: {e}")
+        #     return False
 
     def upload_content(self, content: Union[str, bytes], s3_key: str, encoding: str = "utf-8") -> bool:
         """
@@ -160,6 +209,8 @@ class S3FileHandler:
                 if isinstance(content, str)
                 else content
             )
+            if not validate_file_right(body):
+                return False
             
             self.s3_client.put_object(
                 Bucket=self.bucket_name, 
@@ -232,6 +283,9 @@ class S3FileHandler:
                 Bucket=self.bucket_name, Key=s3_key
             )
             content = response["Body"].read().decode(encoding)
+            if not validate_file_right(content):
+                self.delete_file(s3_key)
+                return None
             return content
         except UnicodeDecodeError as e:
             logger.error(
