@@ -76,7 +76,7 @@ class CompanyReport:
     @lru_cache(maxsize=1)
     def chunked_document(self):
         if self._filing.document.extension==".txt":
-            return ChunkedDocumentText(self._filing.text())
+            return ChunkedDocumentText(self._filing.html())
         return ChunkedDocument(self._filing.html())
 
 
@@ -282,7 +282,7 @@ class TenK(CompanyReport):
     @lru_cache(maxsize=1)
     def chunked_document(self):
         if self._filing.document.extension==".txt":
-            return ChunkedDocumentText(self._filing.text())
+            return ChunkedDocumentText(self._filing.html())
         return ChunkedDocument(self._filing.html(), prefix_src=self._filing.base_dir)
     
     @lru_cache(maxsize=1)
@@ -674,7 +674,7 @@ class TenQ(CompanyReport):
     @lru_cache(maxsize=1)
     def chunked_document(self):
         if self._filing.document.extension==".txt":
-            return ChunkedDocumentText(self._filing.text())
+            return ChunkedDocumentText(self._filing.html())
         return ChunkedDocument(self._filing.html(), prefix_src=self._filing.base_dir)
     
     def get_structure(self):

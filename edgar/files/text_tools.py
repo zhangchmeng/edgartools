@@ -187,7 +187,7 @@ class ChunkedDocumentText:
 
     def get_signature(self) -> str:
         sig_index = self._chunked_data[self._chunked_data.Signature].index
-        res = "".join([self.chunks[idx] for idx in sig_index])
+        res = "\n".join([self.chunks[idx] for idx in sig_index])
         return self.clean_part_line(res)
 
     def get_introduction(self) -> str:
@@ -199,7 +199,7 @@ class ChunkedDocumentText:
             first_item_idx = None
         if first_item_idx is None:
             return ""
-        res = "".join(df.loc[: first_item_idx - 1, "Text"].tolist())
+        res = "\n".join(df.loc[: first_item_idx - 1, "Text"].tolist())
         return self.clean_part_line(res)
 
     def _chunks_for(self, item_or_part: str, col: str = "Item"):
