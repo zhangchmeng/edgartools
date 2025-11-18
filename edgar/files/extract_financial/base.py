@@ -91,6 +91,7 @@ class BasePageSplitter(ABC):
             r"^\s*F-(\d+)",  # Starts with F-number
             r"^F-\s*(\d+)",  # Handle whitespace in 'F- 10'
             r"^\s*-\s*F-(\d+)\s*-\s*$",  # Handle '- F-18 -' style
+            r"^\s*F\s*-\s*(\d+)\s*$",  # Handle 'F - 10 ' style
         ]
 
         for pattern in patterns:

@@ -276,7 +276,7 @@ class AssembleText:
                 )
             except Exception:
                 pass
-
+    
         with time_section("extract_content_by_links"):
             # Extract content between link points
             for i, (name, link_id, element) in enumerate(ordered_links):
@@ -336,7 +336,7 @@ class AssembleText:
                             elements_to_process.append(current)
                             processed_elements.add(id(current))
                         
-                    next_elem = current.next_sibling
+                    next_elem = current.next_sibling or current.next_element
                     if not next_elem or next_elem in link_element_list:
                         break
                     current = next_elem

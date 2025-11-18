@@ -102,7 +102,6 @@ def group_items_by_structure(
                 result[expected_part][normalized_item] = content
             else:
                 result["extracted"][normalized_item] = content
-
     return result, item_to_part
 
 
@@ -551,23 +550,13 @@ class ParsedHtml10K(BaseHtmlParser):
         )
         return result
 
-    def extract_html(
+    def _normal_extact_html(
         self,
         html_content: str,
         structure,
         markdown: bool = False,
         form_type: str = "10-K",
     ) -> Dict[str, Any]:
-        # extract_res = extract_financial_statement(html_content)
-        # financal_elements_content = ""
-        # # AssembleText.assemble_html_document(extract_res.page_contents[1])
-        # # AssembleText.assemble_html_document(financal_elements[0])
-        # if extract_res.success:
-        #     financal_elements = extract_res.page_contents_elements
-        #     financal_elements_content = AssembleText.assemble_html_document(financal_elements)
-        #     soup_obj = extract_res.soup
-        #     if soup_obj is not None and len(soup_obj.get_text()) > 20000:
-        #         html_content = str(soup_obj)
         index_table = self.extract_html_link_info(html_content)
         index_table = self._priority_index_table(index_table)
         raw_item_links = self.extract_item_and_split(index_table)
@@ -672,6 +661,58 @@ class ParsedHtml10K(BaseHtmlParser):
                     result.setdefault(target_part, {}).setdefault(target_item, "")
                     result[target_part][target_item] += "\n" + tail.strip()
         return result
+
+    def extract_html_after_split(
+        self,
+        html_content: str,
+        structure,
+        markdown: bool = False,
+        form_type: str = "10-K",
+    ) -> Dict[str, Any]:
+        extract_res = extract_financial_statement(html_content)
+        financal_elements_content = ""
+        # AssembleText.assemble_html_document(extract_res.page_contents[1])
+        # AssembleText.assemble_html_document(financal_elements[0])
+        if extract_res.success:
+            financal_elements = extract_res.page_contents_elements
+            financal_elements_content = AssembleText.assemble_html_document(financal_elements)
+            soup_obj = extract_res.soup
+            if soup_obj is not None and len(soup_obj.get_text()) > 20000:
+                html_content = str(soup_obj)
+        part_item_res = self._normal_extact_html(
+            html_content, structure, markdown, form_type
+        )
+        if financal_elements_content:
+            item8_text = part_item_res.get("part ii", {}).get("item 8", "") or ""
+            item15_text = part_item_res.get("part iv", {}).get("item 15", "") or ""
+            if len(item8_text) >= len(item15_text):
+                target_part, target_item = "part ii", "item 8"
+            else:
+                target_part, target_item = "part iv", "item 15"
+            dest = part_item_res.setdefault(target_part, {})
+            dest.setdefault(target_item, "")
+            dest[target_item] += "\n" + financal_elements_content
+        return part_item_res
+    def extract_html(
+        self,
+        html_content: str,
+        structure,
+        markdown: bool = False,
+        form_type: str = "10-K",
+    ) -> Dict[str, Any]:
+        part_item_res = self._normal_extact_html(
+            html_content, structure, markdown, form_type
+        )
+        item8_text = part_item_res.get("part ii", {}).get("item 8", "") or ""
+        item15_text = part_item_res.get("part iv", {}).get("item 15", "") or ""
+        if len(item8_text) < 20000 and len(item15_text) < 20000:
+            for pa_part, items in part_item_res.items():
+                for pa_item, txt in items.items():
+                    if isinstance(txt, str) and len(txt) >= 30000:
+                        return self.extract_html_after_split(
+                            html_content, structure, markdown, form_type
+                        )
+        return part_item_res
 
 
 class ParsedHtml10Q(BaseHtmlParser):
@@ -1451,20 +1492,7 @@ class ParsedHtml20F(ParsedHtml10K):
 
         return item_links
 
-    def extract_html(
-        self,
-        html_content: str,
-        structure,
-        markdown: bool = False,
-        form_type: str = "10-K",
-    ) -> Dict[str, Any]:
-        # extract_res = extract_financial_statement(html_content)
-        # financal_elements_content = ""
-        # if extract_res.success:
-        #     financal_elements = extract_res.page_contents_elements
-        #     financal_elements_content = AssembleText.assemble_html_document(financal_elements)
-        #     if len(extract_res.soup.get_text()) > 20000:
-        #         html_content = str(extract_res.soup)
+    def _normal_extact_html(self, html_content: str, structure, markdown: bool = False, form_type: str = "10-K") -> Dict[str, Any]:
         index_table = self.extract_html_link_info(html_content)
         index_table = self._priority_index_table(index_table)
         raw_item_links = self.extract_item_and_split(index_table)
@@ -1480,9 +1508,7 @@ class ParsedHtml20F(ParsedHtml10K):
         elif not item_links:
             raise Exception("20-F/A no enough link, use str re")
 
-        item_result = AssembleText.assemble_items(
-            html_content, item_links, markdown=markdown
-        )
+        item_result = AssembleText.assemble_items(html_content, item_links, markdown=markdown)
 
         # Use common structured dispatch to strictly align items to structure and merge sub-items
         result, item_to_part = group_items_by_structure(item_result, structure)
@@ -1522,7 +1548,6 @@ class ParsedHtml20F(ParsedHtml10K):
         #         result.setdefault("extracted", {}).setdefault("item 18", "")
         #         result["extracted"]["item 18"] += financal_elements_content
         result.setdefault("part iii", {}).setdefault(target_key, "")
-        # if len(result.get("part ii", {}).get("item 8", "")) < 20000 and len(result.get("part iv", {}).get("item 15", "")) < 20000:
         if (
             len(result.get("part iii", {}).get("item 19", "")) > 10000
             or len(result.get("extracted", {}).get("signature", "")) > 10000
@@ -1578,6 +1603,45 @@ class ParsedHtml20F(ParsedHtml10K):
                     # Append the lower part to the target item
                     result["part iii"][target_key] += "\n" + tail.strip()
         return result
+        
+    def extract_html_after_split(self, html_content: str, structure, markdown: bool = False, form_type: str = "10-K") -> Dict[str, Any]:
+        extract_res = extract_financial_statement(html_content)
+        financal_elements_content = ""
+        if extract_res.success:
+            financal_elements = extract_res.page_contents_elements
+            financal_elements_content = AssembleText.assemble_html_document(financal_elements)
+            if len(extract_res.soup.get_text()) > 20000:
+                html_content = str(extract_res.soup)
+        part_item_res = self._normal_extact_html(html_content, structure, markdown, form_type)
+        if financal_elements_content:
+            item17_text = part_item_res.get("part iii", {}).get("item 17", "") or ""
+            item18_text = part_item_res.get("part iii", {}).get("item 18", "") or ""
+            part_item_res.setdefault("part iii", {})
+            if len(item17_text) > len(item18_text):
+                part_item_res["part iii"]["item 17"] += "\n" + financal_elements_content
+            else:
+                part_item_res["part iii"]["item 18"] += "\n" + financal_elements_content
+        return part_item_res
+
+    def extract_html(
+        self,
+        html_content: str,
+        structure,
+        markdown: bool = False,
+        form_type: str = "10-K",
+    ) -> Dict[str, Any]:
+        result = self._normal_extact_html(html_content, structure, markdown, form_type)
+        item17_text = result.get("part iii", {}).get("item 17", "") or ""
+        item18_text = result.get("part iii", {}).get("item 18", "") or ""
+        if len(item17_text) < 20000 and len(item18_text) < 20000:
+            for pa_part, items in result.items():
+                for pa_item, txt in items.items():
+                    if pa_part == "part iii" and pa_item in ("item 17", "item 18"):
+                        continue
+                    if isinstance(txt, str) and len(txt) >= 30000:
+                        return self.extract_html_after_split(html_content, structure, markdown, form_type)
+        return result
+  
 
 
 if __name__ == "__main__":

@@ -295,35 +295,18 @@ class TenK(CompanyReport):
     @lru_cache(maxsize=1)
     def chunked_document_split_financial(self):
         return ChunkedDocumentSplitFinancial(self._filing.html())
-
-    def get_re_parse_res(self, markdown:bool=True):
-        # financial_content = self.chunked_document_split_financial.assemble_financial_content(markdown=markdown)
-        # part_item_res = self.chunked_document_split_financial.part_item_res(markdown=markdown)
-        financial_content = ""
-        part_item_res = self.chunked_document.part_item_res(markdown=markdown)
-  
-        # 合并被错误拆分到不同 Part 的相同 Item，统一归并到其规范 Part，并移除其它 Part 的重复项
+    
+    def _normalize_and_attach_financial(self, part_item_res: dict):
         standard_pa = self.structure.structure
-        right_map = {} # item: part
-        for st_part in standard_pa:
-            for st_item in standard_pa[st_part]:
-                right_map[st_item] = st_part
-
+        right_map = {st_item: st_part for st_part in standard_pa for st_item in standard_pa[st_part]}
         new_part_item_res = {}
         for pa_part in part_item_res:
             for pa_item in part_item_res[pa_part]:
-                right_part = (right_map.get(pa_item.upper(), pa_part)).lower()
-                
-                if new_part_item_res.get(right_part):
-                    new_part_item_res[right_part][pa_item] = new_part_item_res[right_part].get(pa_item, "") + part_item_res.get(pa_part, {}).get(pa_item, "")
-                else:
-                    new_part_item_res[right_part] = {}
-                    new_part_item_res[right_part][pa_item] = new_part_item_res[right_part].get(pa_item, "") + part_item_res.get(pa_part, {}).get(pa_item, "")
+                rp = (right_map.get(pa_item.upper(), pa_part)).lower()
+                dest = new_part_item_res.setdefault(rp, {})
+                dest[pa_item] = dest.get(pa_item, "") + part_item_res.get(pa_part, {}).get(pa_item, "")
         
         part_item_res = new_part_item_res
-        # 从以下两个模块中找出字符长度最长的模块，然后找出第一个能匹配到的字符
-        # "CONSOLIDATED FINANCIAL STATEMENTS"（不区分大小写），将从该匹配处开始的内容附加到 item 8 中
-        # 候选模块：result["extracted"]["signature"], result["part iv"]["item 16"]
         if part_item_res.get("part ii", {}).get("item 8", ""):
             target_part = "part ii"
             target_item = "item 8"
@@ -336,54 +319,58 @@ class TenK(CompanyReport):
             target_part = "part ii"
             target_item = "item 8"
             current_financial_length = len(part_item_res.get("part ii", {}).get("item 8", ""))
-
-        signature_text = ""
-        item16_text = ""
-        try:
-            signature_text = part_item_res.get("extracted", {}).get("signature", "") or ""
-        except Exception:
-            signature_text = ""
-        try:
-            item16_text = part_item_res.get("part iv", {}).get("item 16", "") or ""
-        except Exception:
-            item16_text = ""
-    
-        # 选择较长文本并记录来源模块键
+        signature_text = part_item_res.get("extracted", {}).get("signature", "") or ""
+        item16_text = part_item_res.get("part iv", {}).get("item 16", "") or ""
         if len(item16_text) >= len(signature_text):
             candidate_text = item16_text
             candidate_key = ("part iv", "item 16")
         else:
             candidate_text = signature_text
             candidate_key = ("extracted", "signature")
-    
         if candidate_text and len(candidate_text) > current_financial_length:
-            financial_statement_patterns = [
-                # r"CONSOLIDATED\s+FINANCIAL\s+STATEMENTS",
-                # r"COMBINED\s+FINANCIAL\s+STATEMENTS", 
-                # r"CONDENSED\s+CONSOLIDATED\s+FINANCIAL\s+STATEMENTS",
-                # r"CONDENSED\s+COMBINED\s+FINANCIAL\s+STATEMENTS",
+            patterns = (
                 r"FINANCIAL\s+STATEMENTS",
-                r"F-1"
-            ]
-            
-            match = None
-            # 使用多个正则，取最早出现（最靠前）的匹配
-            match = None
-            for pattern in financial_statement_patterns:
-                m = re.search(pattern, candidate_text, re.IGNORECASE)
-                if m and (match is None or m.start() < match.start()):
-                    match = m
+                r"F-1",
+            )
+            matches = [re.search(p, candidate_text, re.IGNORECASE) for p in patterns]
+            match = min((m for m in matches if m), key=lambda m: m.start(), default=None)
             if match:
-                # 被拆分的数据：上半部分（匹配之前）填充回原本的模块，下半部分（从匹配开始）附加到 item 8
                 before = candidate_text[:match.start()]
                 tail = candidate_text[match.start():]
-    
-                # 上半部分填充回原本的模块（覆盖原模块内容为匹配前文本）
                 part_item_res.setdefault(candidate_key[0], {})[candidate_key[1]] = (before or "").strip()
-    
-                # 下半部分附加到 item 8
                 part_item_res.setdefault(target_part, {}).setdefault(target_item, "")
                 part_item_res[target_part][target_item] += "\n" + tail.strip()
+        return part_item_res
+
+    def get_re_parse_res_after_financial_split(self, markdown:bool=True):
+        financial_content = self.chunked_document_split_financial.assemble_financial_content(markdown=markdown)
+        part_item_res = self.chunked_document_split_financial.part_item_res(markdown=markdown)
+        if part_item_res.get("part ii", {}).get("item 8", ""):
+            target_part = "part ii"
+            target_item = "item 8"
+        elif part_item_res.get("part iv", {}).get("item 15", ""):
+            target_part = "part iv"
+            target_item = "item 15"
+        else:
+            target_part = "part ii"
+            target_item = "item 8"
+        dest = part_item_res.setdefault(target_part, {})
+        dest.setdefault(target_item, "")
+        if financial_content:
+            dest[target_item] += "\n" + financial_content
+        part_item_res = self._normalize_and_attach_financial(part_item_res)
+        return part_item_res
+
+    def get_re_parse_res(self, markdown:bool=True):
+        part_item_res = self.chunked_document.part_item_res(markdown=markdown)
+        part_item_res = self._normalize_and_attach_financial(part_item_res)
+        item8_text = part_item_res.get("part ii", {}).get("item 8", "") or ""
+        item15_text = part_item_res.get("part iv", {}).get("item 15", "") or ""
+        if len(item8_text) < 20000 and len(item15_text) < 20000:
+            for pa_part, items in part_item_res.items():
+                for pa_item, txt in items.items():
+                    if isinstance(txt, str) and len(txt) >= 30000:
+                        return self.get_re_parse_res_after_financial_split(markdown)
         return part_item_res
 
     def get_id_parse_res(self, markdown:bool=True):
@@ -898,95 +885,63 @@ class TwentyF(CompanyReport):
     def chunked_document_split_financial(self):
         return ChunkedDocumentSplitFinancial(self._filing.html())
 
-    def get_re_parse_res(self, markdown:bool=True):
-        # financial_content = self.chunked_document_split_financial.assemble_financial_content(markdown=markdown)
-        # part_item_res = self.chunked_document_split_financial.part_item_res(markdown=markdown)
-        # # 合并被错误拆分到不同 Part 的相同 Item，统一归并到其规范 Part，并移除其它 Part 的重复项
-        # if financial_content:
-        #     if part_item_res.get("part iii") and part_item_res['part iii'].get("item 18"):
-        #         part_item_res['part iii']['item 18'] += financial_content
-        part_item_res = self.chunked_document.part_item_res(markdown=markdown)
-
+    def _normalize_and_attach_financial(self, part_item_res):
         standard_pa = self.structure.structure
-        right_map = {} # item: part
-        for st_part in standard_pa:
-            for st_item in standard_pa[st_part]:
-                right_map[st_item] = st_part
-
+        right_map = {st_item: st_part for st_part in standard_pa for st_item in standard_pa[st_part]}
         new_part_item_res = {}
         for pa_part in part_item_res:
             for pa_item in part_item_res[pa_part]:
-                right_part = (right_map.get(pa_item.upper(), pa_part)).lower()
-                
-                if new_part_item_res.get(right_part):
-                    new_part_item_res[right_part][pa_item] = new_part_item_res[right_part].get(pa_item, "") + part_item_res.get(pa_part, {}).get(pa_item, "")
-                else:
-                    new_part_item_res[right_part] = {}
-                    new_part_item_res[right_part][pa_item] = new_part_item_res[right_part].get(pa_item, "") + part_item_res.get(pa_part, {}).get(pa_item, "")
-
+                rp = (right_map.get(pa_item.upper(), pa_part)).lower()
+                dest = new_part_item_res.setdefault(rp, {})
+                dest[pa_item] = dest.get(pa_item, "") + part_item_res.get(pa_part, {}).get(pa_item, "")
         part_item_res = new_part_item_res
-        # 从以下两个模块中找出字符长度最长的模块，然后找出第一个能匹配到的字符
-        # "CONSOLIDATED FINANCIAL STATEMENTS"（不区分大小写），将从该匹配处开始的内容附加到 item 8 中
-        # 候选模块：result["extracted"]["signature"], result["part iv"]["item 16"]
-        try:
-            item17_text = part_item_res.get("part iii", {}).get("item 17", "") or ""
-        except Exception:
-            item17_text = ""
-        try:
-            item18_text = part_item_res.get("part iii", {}).get("item 18", "") or ""
-        except Exception:
-            item18_text = ""
-    
+        item17_text = part_item_res.get("part iii", {}).get("item 17", "") or ""
+        item18_text = part_item_res.get("part iii", {}).get("item 18", "") or ""
         if len(item18_text) > len(item17_text):
             target_key = "item 18"
             current_financial_length = len(item18_text)
         else:
             target_key = "item 17"
             current_financial_length = len(item17_text)
-        
-        signature_text = ""
-        item19_text = ""
-        try:
-            signature_text = part_item_res.get("extracted", {}).get("signature", "") or ""
-        except Exception:
-            signature_text = ""
-        try:
-            item19_text = part_item_res.get("part iii", {}).get("item 19", "") or ""
-        except Exception:
-            item19_text = ""
-    
-        # 选择较长文本并记录来源模块键
+        signature_text = part_item_res.get("extracted", {}).get("signature", "") or ""
+        item19_text = part_item_res.get("part iii", {}).get("item 19", "") or ""
         if len(item19_text) >= len(signature_text):
             candidate_text = item19_text
             candidate_key = ("part iii", "item 19")
         else:
             candidate_text = signature_text
             candidate_key = ("extracted", "signature")
-    
         if candidate_text and len(candidate_text) > current_financial_length:
-            financial_statement_patterns = [
-                r"FINANCIAL\s+STATEMENTS",
-                r"F-1"
-            ]
-            
-            match = None
-            # 使用多个正则，取最早出现（最靠前）的匹配
-            match = None
-            for pattern in financial_statement_patterns:
-                m = re.search(pattern, candidate_text, re.IGNORECASE)
-                if m and (match is None or m.start() < match.start()):
-                    match = m
+            patterns = (r"CONSOLIDATED\s+FINANCIAL\s+STATEMENTS", r"FINANCIAL\s+STATEMENTS", r"F-1")
+            matches = [re.search(p, candidate_text, re.IGNORECASE) for p in patterns]
+            match = min((m for m in matches if m), key=lambda m: m.start(), default=None)
             if match:
-                # 被拆分的数据：上半部分（匹配之前）填充回原本的模块，下半部分（从匹配开始）附加到 item 8
                 before = candidate_text[:match.start()]
                 tail = candidate_text[match.start():]
-    
-                # 上半部分填充回原本的模块（覆盖原模块内容为匹配前文本）
                 part_item_res.setdefault(candidate_key[0], {})[candidate_key[1]] = (before or "").strip()
-    
-                # 下半部分附加到 item 8
                 part_item_res.setdefault("part iii", {}).setdefault(target_key, "")
                 part_item_res["part iii"][target_key] += "\n" + tail.strip()
+        return part_item_res
+
+    def get_re_parse_res_after_financial_split(self, markdown:bool=True):
+        financial_content = self.chunked_document_split_financial.assemble_financial_content(markdown=markdown)
+        part_item_res = self.chunked_document_split_financial.part_item_res(markdown=markdown)
+        if financial_content and part_item_res.get("part iii") and part_item_res["part iii"].get("item 18"):
+            part_item_res["part iii"]["item 18"] += financial_content
+        return self._normalize_and_attach_financial(part_item_res)
+
+    def get_re_parse_res(self, markdown:bool=True):
+        part_item_res = self.chunked_document.part_item_res(markdown=markdown)
+        part_item_res =  self._normalize_and_attach_financial(part_item_res)
+        item17_text = part_item_res.get("part iii", {}).get("item 17", "") or ""
+        item18_text = part_item_res.get("part iii", {}).get("item 18", "") or ""
+        if len(item17_text) < 20000 and len(item18_text) < 20000:
+            for pa_part, items in part_item_res.items():
+                for pa_item, txt in items.items():
+                    if pa_part.lower() == "part iii" and pa_item.lower() in ("item 17", "item 18"):
+                        continue
+                    if isinstance(txt, str) and len(txt) >= 30000:
+                        return self.get_re_parse_res_after_financial_split(markdown)
         return part_item_res
 
     @lru_cache(maxsize=1)
